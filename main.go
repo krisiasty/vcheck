@@ -29,17 +29,18 @@ const (
 
 func main() {
 	var (
-		host            string
-		user            string
-		port            int
-		useAgent        bool
-		identity        string
-		usePassword     bool
-		fix             bool
-		debug           bool
-		showVer         bool
-		insecure bool
-		timeout         time.Duration
+		host           string
+		user           string
+		port           int
+		useAgent       bool
+		identity       string
+		usePassword    bool
+		fix            bool
+		debug          bool
+		showVer        bool
+		insecure       bool
+		connectTimeout time.Duration
+		commandTimeout time.Duration
 	)
 	flag.StringVar(&host, "host", "", "remote host (required)")
 	flag.StringVar(&user, "user", "", "remote user (default: $USER)")
@@ -51,13 +52,14 @@ func main() {
 	flag.BoolVar(&debug, "debug", false, "increase log verbosity")
 	flag.BoolVar(&showVer, "version", false, "show version and exit")
 	flag.BoolVar(&insecure, "insecure", false, "accept host keys not yet recorded in known_hosts; mismatches with a recorded key still fail")
-	flag.DurationVar(&timeout, "timeout", 15*time.Second, "SSH connect timeout")
+	flag.DurationVar(&connectTimeout, "timeout", 15*time.Second, "SSH connect timeout")
+	flag.DurationVar(&commandTimeout, "command-timeout", 30*time.Second, "remote command timeout (0 disables)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr,
 			"usage: %s -host HOST [flags]\n\n"+
 				"checks remote host for Copy Fail (CVE-2026-31431) and Dirty Frag\n"+
-				"(CVE-2026-43284) kernel-module exposure.\n\nflags:\n",
+				"(CVE-2026-43284, CVE-2026-43500) kernel-module exposure.\n\nflags:\n",
 			os.Args[0])
 		flag.PrintDefaults()
 	}
@@ -78,6 +80,10 @@ func main() {
 		slog.Error("invalid port", "port", port)
 		os.Exit(exitUsage)
 	}
+	if connectTimeout < 0 || commandTimeout < 0 {
+		slog.Error("timeout values cannot be negative", "timeout", connectTimeout, "command_timeout", commandTimeout)
+		os.Exit(exitUsage)
+	}
 	if user == "" {
 		user = os.Getenv("USER")
 		if user == "" {
@@ -88,7 +94,7 @@ func main() {
 	slog.Debug("target", "user", user, "host", host, "port", port)
 
 	ac := authConfig{useAgent: useAgent, identityPath: identity, usePassword: usePassword}
-	client, err := dial(user, host, port, timeout, ac, insecure)
+	client, err := dial(user, host, port, connectTimeout, ac, insecure)
 	if err != nil {
 		slog.Error("ssh connection failed", "host", host, "port", port, "err", err.Error())
 		os.Exit(exitConn)
@@ -96,7 +102,7 @@ func main() {
 	defer func() { _ = client.Close() }()
 	slog.Info("connected", "user", user, "host", host, "port", port)
 
-	sudo, err := newSudoRunner(client)
+	sudo, err := newSudoRunner(client, commandTimeout)
 	if err != nil {
 		slog.Error("sudo setup failed", "err", err.Error())
 		os.Exit(exitSudo)
@@ -114,24 +120,38 @@ func main() {
 	}
 
 	if fix {
-		written, err := applyFix(sudo, findings)
+		_, exitCode, err := applyFixAndReport(sudo, findings)
 		if err != nil {
 			slog.Error("fix failed", "err", err.Error())
 			os.Exit(exitInternal)
 		}
-		if written == 0 {
-			slog.Info("fix: nothing to do — all affected modules already blacklisted")
-		} else {
-			slog.Info("re-scanning after fix", "snippets_written", written)
-			findings, err = runChecks(sudo)
-			if err != nil {
-				slog.Error("post-fix check execution failed", "err", err.Error())
-				os.Exit(exitInternal)
-			}
-		}
+		os.Exit(exitCode)
 	}
 
 	os.Exit(classifyFindings(findings))
+}
+
+func applyFixAndReport(s rootRunner, findings []vulnFindings) ([]vulnFindings, int, error) {
+	slog.Info("findings before fix")
+	exitCode := classifyFindings(findings)
+
+	written, err := applyFix(s, findings)
+	if err != nil {
+		return nil, 0, err
+	}
+	if written == 0 {
+		slog.Info("fix: nothing to do — all affected modules already blacklisted")
+		return findings, exitCode, nil
+	}
+
+	slog.Info("re-scanning after fix", "snippets_written", written)
+	findings, err = runChecks(s)
+	if err != nil {
+		return nil, 0, fmt.Errorf("post-fix check execution failed: %w", err)
+	}
+
+	slog.Info("findings after fix")
+	return findings, classifyFindings(findings), nil
 }
 
 func initLog(debug bool) {

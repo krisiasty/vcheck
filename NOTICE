@@ -63,11 +63,9 @@ SOFTWARE.
 
 ---
 
-golang.org/x/crypto v0.50.0   https://golang.org/x/crypto
+golang.org/x/crypto v0.51.0   https://golang.org/x/crypto
 golang.org/x/term   v0.43.0   https://golang.org/x/term
 golang.org/x/sys    v0.44.0   https://golang.org/x/sys    (indirect)
-golang.org/x/net    v0.52.0   https://golang.org/x/net    (indirect)
-golang.org/x/text   v0.36.0   https://golang.org/x/text   (indirect)
 
 BSD 3-Clause License
 

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
@@ -16,13 +17,14 @@ import (
 // passwordless sudo is configured; if not, it prompts once for a password and
 // feeds it via `sudo -S` on every subsequent invocation.
 type sudoRunner struct {
-	client       *ssh.Client
-	passwordless bool
-	password     string
+	client         *ssh.Client
+	passwordless   bool
+	password       string
+	commandTimeout time.Duration
 }
 
-func newSudoRunner(client *ssh.Client) (*sudoRunner, error) {
-	s := &sudoRunner{client: client}
+func newSudoRunner(client *ssh.Client, commandTimeout time.Duration) (*sudoRunner, error) {
+	s := &sudoRunner{client: client, commandTimeout: commandTimeout}
 	if err := s.tryPasswordless(); err == nil {
 		s.passwordless = true
 		return s, nil
@@ -32,8 +34,12 @@ func newSudoRunner(client *ssh.Client) (*sudoRunner, error) {
 		return nil, fmt.Errorf("cannot read sudo password: %w", err)
 	}
 	s.password = pw
-	if _, _, _, err := s.run("true"); err != nil {
+	_, stderr, code, err := s.run("true")
+	if err != nil {
 		return nil, fmt.Errorf("sudo authentication failed: %w", err)
+	}
+	if code != 0 {
+		return nil, fmt.Errorf("sudo authentication failed: exit %d: %s", code, strings.TrimSpace(stderr))
 	}
 	return s, nil
 }
@@ -44,7 +50,7 @@ func (s *sudoRunner) tryPasswordless() error {
 		return err
 	}
 	defer func() { _ = sess.Close() }()
-	return sess.Run("sudo -n true 2>/dev/null")
+	return runSSHSession(sess, "sudo -n true 2>/dev/null", s.commandTimeout)
 }
 
 func readPassword(prompt string) (string, error) {
@@ -93,7 +99,7 @@ func (s *sudoRunner) runStdin(cmd string, extraStdin io.Reader) (string, string,
 	}
 	sess.Stdin = &stdin
 
-	err = sess.Run(buildSudoCmd(s.passwordless, cmd))
+	err = runSSHSession(sess, buildSudoCmd(s.passwordless, cmd), s.commandTimeout)
 	if err != nil {
 		var ee *ssh.ExitError
 		if errors.As(err, &ee) {
@@ -102,6 +108,36 @@ func (s *sudoRunner) runStdin(cmd string, extraStdin io.Reader) (string, string,
 		return stdout.String(), stderr.String(), -1, err
 	}
 	return stdout.String(), stderr.String(), 0, nil
+}
+
+func runSSHSession(sess *ssh.Session, cmd string, timeout time.Duration) error {
+	if timeout <= 0 {
+		return sess.Run(cmd)
+	}
+	if err := sess.Start(cmd); err != nil {
+		return err
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- sess.Wait()
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		_ = sess.Signal(ssh.SIGKILL)
+		_ = sess.Close()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+		}
+		return fmt.Errorf("remote command timed out after %s", timeout)
+	}
 }
 
 func buildSudoCmd(passwordless bool, cmd string) string {

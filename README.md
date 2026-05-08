@@ -21,7 +21,7 @@ blacklisted, then re-runs the checks and reports the final state.
 **Homebrew (macOS):**
 
 ```bash
-brew install krisiasty/tap/vcheck
+brew install --cask krisiasty/tap/vcheck
 ```
 
 **Pre-built binaries** for Linux, macOS, and Windows are published on the [releases page](https://github.com/krisiasty/vcheck/releases).
@@ -49,6 +49,7 @@ vcheck -host HOST [flags]
 | `-insecure`         | `false`       | Accept host keys not yet recorded in `known_hosts`; mismatches with a recorded key still fail |
 | `-fix`              | `false`       | Write `/etc/modprobe.d` snippets for modules that are not already blacklisted                 |
 | `-timeout`          | `15s`         | SSH connect timeout                                                                           |
+| `-command-timeout`  | `30s`         | Remote command timeout (`0` disables)                                                         |
 | `-debug`            | `false`       | Increase log verbosity                                                                        |
 | `-version`          | `false`       | Show version and exit                                                                         |
 
@@ -67,7 +68,7 @@ otherwise it prompts once for a password (input is hidden) and feeds it via `sud
 | `2`  | SSH connection failed                                                              |
 | `3`  | Sudo authentication failed                                                         |
 | `4`  | One or more modules not blacklisted (no current exposure)                          |
-| `5`  | One or more modules currently loaded or actively in use                            |
+| `5`  | One or more modules currently loaded, built into the kernel, or actively in use    |
 | `99` | Internal/check failure                                                             |
 
 ## Sample output
@@ -114,12 +115,21 @@ INF connected user=ops host=host.example.com port=22
 INF checking vulnerability cve=CVE-2026-31431 name="Copy Fail"
 INF checking vulnerability cve=CVE-2026-43284 name="Dirty Frag (IPsec)"
 INF checking vulnerability cve=CVE-2026-43500 name="Dirty Frag (RxRPC)"
+INF findings before fix
+INF mitigated cve=CVE-2026-31431 module=algif_aead
+ERR VULNERABLE cve=CVE-2026-43284 module=esp4 loaded=true
+ERR module not blacklisted cve=CVE-2026-43284 module=esp6
+ERR module not blacklisted cve=CVE-2026-43284 module=xfrm_algo
+ERR module not blacklisted cve=CVE-2026-43284 module=xfrm_user
+ERR module not blacklisted cve=CVE-2026-43500 module=rxrpc
+ERR module not blacklisted cve=CVE-2026-43500 module=kafs
 INF writing modprobe.d snippet path=/etc/modprobe.d/cve-2026-43284-disable.conf modules="[esp4 esp6 xfrm_algo xfrm_user]"
 INF writing modprobe.d snippet path=/etc/modprobe.d/cve-2026-43500-disable.conf modules="[rxrpc kafs]"
 INF re-scanning after fix snippets_written=2
 INF checking vulnerability cve=CVE-2026-31431 name="Copy Fail"
 INF checking vulnerability cve=CVE-2026-43284 name="Dirty Frag (IPsec)"
 INF checking vulnerability cve=CVE-2026-43500 name="Dirty Frag (RxRPC)"
+INF findings after fix
 INF mitigated cve=CVE-2026-31431 module=algif_aead
 ERR blacklisted but currently loaded; run 'modprobe -r' or reboot cve=CVE-2026-43284 module=esp4
 INF mitigated cve=CVE-2026-43284 module=esp6
@@ -141,7 +151,7 @@ INF connected user=ops host=host.example.com port=22
 INF checking vulnerability cve=CVE-2026-31431 name="Copy Fail"
 INF checking vulnerability cve=CVE-2026-43284 name="Dirty Frag (IPsec)"
 INF checking vulnerability cve=CVE-2026-43500 name="Dirty Frag (RxRPC)"
-INF fix: nothing to do — all affected modules already blacklisted
+INF findings before fix
 INF mitigated cve=CVE-2026-31431 module=algif_aead
 ERR blacklisted but currently loaded; run 'modprobe -r' or reboot cve=CVE-2026-43284 module=esp4
 INF mitigated cve=CVE-2026-43284 module=esp6
@@ -149,6 +159,7 @@ INF mitigated cve=CVE-2026-43284 module=xfrm_algo
 INF mitigated cve=CVE-2026-43284 module=xfrm_user
 INF mitigated cve=CVE-2026-43500 module=rxrpc
 INF mitigated cve=CVE-2026-43500 module=kafs
+INF fix: nothing to do — all affected modules already blacklisted
 ```
 
 ### Third run — after `modprobe -r esp4`
@@ -187,6 +198,9 @@ man-in-the-middle warnings on a known host.
 
 - **Loaded:** `lsmod` is fetched once and module names are matched against the
   first column.
+- **Built-in:** `/lib/modules/$(uname -r)/modules.builtin` and `/sys/module`
+  are checked because modprobe snippets cannot disable code compiled into the
+  running kernel.
 - **Blacklisted:** every file under `/etc/modprobe.d/` is searched (`grep -rE`)
   for an `install <module> /bin/false` directive — the same form vcheck writes
   with `-fix`. Other forms of disabling (e.g. `blacklist`) are not recognized.
@@ -195,6 +209,6 @@ man-in-the-middle warnings on a known host.
 - **Active sockets (`algif_aead` only):** `ss -p --af-alg` lists open
   `AF_ALG` sockets; any output other than the header counts as live use.
 
-All commands run via `sudo` — privileged access is required to read
-`/var/log/kern.log`, list `AF_ALG` sockets, and write under
-`/etc/modprobe.d/`.
+All commands run via `sudo` and are bounded by `-command-timeout` — privileged
+access is required to read `/var/log/kern.log`, list `AF_ALG` sockets, and
+write under `/etc/modprobe.d/`.

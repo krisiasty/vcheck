@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 )
@@ -16,6 +17,11 @@ type vuln struct {
 	afAlg   bool
 }
 
+type rootRunner interface {
+	run(cmd string) (string, string, int, error)
+	runStdin(cmd string, extraStdin io.Reader) (string, string, int, error)
+}
+
 var vulns = []vuln{
 	{cve: "CVE-2026-31431", name: "Copy Fail", modules: []string{"algif_aead"}, afAlg: true},
 	{cve: "CVE-2026-43284", name: "Dirty Frag (IPsec)", modules: []string{"esp4", "esp6", "xfrm_algo", "xfrm_user"}},
@@ -25,6 +31,7 @@ var vulns = []vuln{
 type moduleStatus struct {
 	name        string
 	loaded      bool
+	builtIn     bool
 	blacklisted bool
 	logTraces   []string
 	afAlgSocks  []string
@@ -35,12 +42,18 @@ type vulnFindings struct {
 	modules []moduleStatus
 }
 
-func runChecks(s *sudoRunner) ([]vulnFindings, error) {
+func runChecks(s rootRunner) ([]vulnFindings, error) {
 	loaded, err := loadedModules(s)
 	if err != nil {
 		return nil, fmt.Errorf("lsmod: %w", err)
 	}
 	slog.Debug("loaded modules retrieved", "count", len(loaded))
+
+	builtIn, err := builtInModules(s, loaded, targetModules())
+	if err != nil {
+		return nil, fmt.Errorf("built-in module check: %w", err)
+	}
+	slog.Debug("built-in modules retrieved", "count", len(builtIn))
 
 	out := make([]vulnFindings, 0, len(vulns))
 	for _, v := range vulns {
@@ -61,7 +74,10 @@ func runChecks(s *sudoRunner) ([]vulnFindings, error) {
 			if _, ok := loaded[m]; ok {
 				ms.loaded = true
 			}
-			slog.Debug("module loaded check", "module", m, "loaded", ms.loaded)
+			if _, ok := builtIn[m]; ok {
+				ms.builtIn = true
+			}
+			slog.Debug("module presence check", "module", m, "loaded", ms.loaded, "built_in", ms.builtIn)
 
 			bl, err := isBlacklisted(s, m)
 			if err != nil {
@@ -90,7 +106,22 @@ func runChecks(s *sudoRunner) ([]vulnFindings, error) {
 	return out, nil
 }
 
-func loadedModules(s *sudoRunner) (map[string]struct{}, error) {
+func targetModules() []string {
+	seen := make(map[string]struct{})
+	out := make([]string, 0)
+	for _, v := range vulns {
+		for _, m := range v.modules {
+			if _, ok := seen[m]; ok {
+				continue
+			}
+			seen[m] = struct{}{}
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func loadedModules(s rootRunner) (map[string]struct{}, error) {
 	stdout, stderr, code, err := s.run("/usr/sbin/lsmod 2>/dev/null || /sbin/lsmod 2>/dev/null || lsmod")
 	if err != nil {
 		return nil, err
@@ -112,10 +143,111 @@ func loadedModules(s *sudoRunner) (map[string]struct{}, error) {
 		}
 		out[f[0]] = struct{}{}
 	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
-func isBlacklisted(s *sudoRunner, mod string) (bool, error) {
+func builtInModules(s rootRunner, loaded map[string]struct{}, modules []string) (map[string]struct{}, error) {
+	fromBuiltin, err := modulesBuiltinFile(s)
+	if err != nil {
+		return nil, err
+	}
+	fromSys, err := sysModuleDirs(s, modules)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[string]struct{})
+	for _, m := range modules {
+		if _, ok := fromBuiltin[m]; ok {
+			out[m] = struct{}{}
+			continue
+		}
+		if _, ok := fromSys[m]; ok {
+			if _, isLoaded := loaded[m]; !isLoaded {
+				out[m] = struct{}{}
+			}
+		}
+	}
+	return out, nil
+}
+
+func modulesBuiltinFile(s rootRunner) (map[string]struct{}, error) {
+	stdout, stderr, code, err := s.run(`f=/lib/modules/$(uname -r)/modules.builtin; [ -r "$f" ] && cat "$f" || true`)
+	if err != nil {
+		return nil, err
+	}
+	if code != 0 {
+		return nil, fmt.Errorf("modules.builtin exit %d: %s", code, strings.TrimSpace(stderr))
+	}
+
+	out := make(map[string]struct{})
+	sc := bufio.NewScanner(strings.NewReader(stdout))
+	for sc.Scan() {
+		if name := moduleNameFromBuiltinPath(sc.Text()); name != "" {
+			out[name] = struct{}{}
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func moduleNameFromBuiltinPath(line string) string {
+	name := strings.TrimSpace(line)
+	if name == "" {
+		return ""
+	}
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	if i := strings.Index(name, ".ko"); i >= 0 {
+		name = name[:i]
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	return strings.ReplaceAll(name, "-", "_")
+}
+
+func sysModuleDirs(s rootRunner, modules []string) (map[string]struct{}, error) {
+	if len(modules) == 0 {
+		return map[string]struct{}{}, nil
+	}
+
+	var cmd strings.Builder
+	cmd.WriteString("for m in")
+	for _, m := range modules {
+		fmt.Fprintf(&cmd, " %s", shellQuote(m))
+	}
+	cmd.WriteString(`; do [ -d "/sys/module/$m" ] && printf '%s\n' "$m"; done; true`)
+
+	stdout, stderr, code, err := s.run(cmd.String())
+	if err != nil {
+		return nil, err
+	}
+	if code != 0 {
+		return nil, fmt.Errorf("sysfs module check exit %d: %s", code, strings.TrimSpace(stderr))
+	}
+
+	out := make(map[string]struct{})
+	sc := bufio.NewScanner(strings.NewReader(stdout))
+	for sc.Scan() {
+		if name := strings.TrimSpace(sc.Text()); name != "" {
+			out[name] = struct{}{}
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func isBlacklisted(s rootRunner, mod string) (bool, error) {
 	// Match the playbook's signature: `install <mod> /bin/false` lines anywhere
 	// in /etc/modprobe.d. Allow leading whitespace and arbitrary spacing.
 	pattern := fmt.Sprintf(`^[[:space:]]*install[[:space:]]+%s[[:space:]]+/bin/false`, mod)
@@ -128,7 +260,7 @@ func isBlacklisted(s *sudoRunner, mod string) (bool, error) {
 	return code == 0, nil
 }
 
-func kernelLogTraces(s *sudoRunner, mod string) ([]string, error) {
+func kernelLogTraces(s rootRunner, mod string) ([]string, error) {
 	// Prefer journalctl -k (journald systems); fall back to /var/log/kern.log
 	// where it exists. Both pipelines are joined so whichever produces output wins.
 	cmd := fmt.Sprintf(
@@ -150,23 +282,32 @@ func kernelLogTraces(s *sudoRunner, mod string) ([]string, error) {
 			lines = append(lines, t)
 		}
 	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
 	return lines, nil
 }
 
-func afAlgSockets(s *sudoRunner) ([]string, error) {
-	stdout, _, code, err := s.run("ss -p --af-alg 2>/dev/null | grep -v '^Netid'")
+func afAlgSockets(s rootRunner) ([]string, error) {
+	stdout, stderr, code, err := s.run("ss -p --af-alg")
 	if err != nil {
 		return nil, err
 	}
-	if code != 0 && code != 1 {
-		return nil, fmt.Errorf("ss --af-alg exit %d", code)
+	if code != 0 {
+		return nil, fmt.Errorf("ss --af-alg exit %d: %s", code, strings.TrimSpace(stderr))
 	}
 	var lines []string
 	sc := bufio.NewScanner(strings.NewReader(stdout))
 	for sc.Scan() {
 		if t := strings.TrimSpace(sc.Text()); t != "" {
+			if strings.HasPrefix(t, "Netid") {
+				continue
+			}
 			lines = append(lines, t)
 		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
 	}
 	return lines, nil
 }
@@ -177,6 +318,10 @@ func classifyFindings(findings []vulnFindings) int {
 		for _, m := range f.modules {
 			afActive := len(m.afAlgSocks) > 0
 			switch {
+			case m.builtIn:
+				anyVuln = true
+				slog.Error("VULNERABLE: module built into kernel; modprobe blacklist cannot mitigate",
+					"cve", f.vuln.cve, "module", m.name, "blacklisted", m.blacklisted)
 			case m.loaded && m.blacklisted:
 				// Boot-time mitigation is in place but the kernel still has the
 				// module loaded — needs `modprobe -r` or a reboot.
@@ -225,7 +370,7 @@ func classifyFindings(findings []vulnFindings) int {
 // for the CVE so the file is authoritative — partial writes (only the
 // currently-missing modules) would overwrite previously-blacklisted entries
 // already in our own file. Returns the count of snippets written.
-func applyFix(s *sudoRunner, findings []vulnFindings) (int, error) {
+func applyFix(s rootRunner, findings []vulnFindings) (int, error) {
 	written := 0
 	for _, f := range findings {
 		anyMissing := false
@@ -258,7 +403,7 @@ func applyFix(s *sudoRunner, findings []vulnFindings) (int, error) {
 	return written, nil
 }
 
-func writeRootFile(s *sudoRunner, path, content string) error {
+func writeRootFile(s rootRunner, path, content string) error {
 	cmd := fmt.Sprintf("install -m 0644 -o root -g root /dev/stdin %s", shellQuote(path))
 	_, stderr, code, err := s.runStdin(cmd, strings.NewReader(content))
 	if err != nil {
