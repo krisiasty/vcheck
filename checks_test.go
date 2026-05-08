@@ -120,6 +120,21 @@ func TestClassifyFindingsTreatsBuiltInAsVulnerable(t *testing.T) {
 	}
 }
 
+func TestIsBlacklistedReturnsGrepErrors(t *testing.T) {
+	r := fakeRunner{
+		runFunc: func(cmd string) (string, string, int, error) {
+			if !strings.HasPrefix(cmd, "grep -r -E -h") {
+				t.Fatalf("unexpected command: %s", cmd)
+			}
+			return "", "grep: /etc/modprobe.d: Permission denied", 2, nil
+		},
+	}
+
+	if _, err := isBlacklisted(r, "algif_aead"); err == nil {
+		t.Fatal("expected grep error to be returned")
+	}
+}
+
 func TestApplyFixAndReportReportsBeforeWriting(t *testing.T) {
 	var logs bytes.Buffer
 	oldLogger := slog.Default()
@@ -164,7 +179,7 @@ func TestApplyFixAndReportReportsBeforeWriting(t *testing.T) {
 		},
 	}
 
-	_, code, err := applyFixAndReport(r, findings)
+	code, err := applyFixAndReport(r, findings)
 	if err != nil {
 		t.Fatalf("applyFixAndReport returned error: %v", err)
 	}

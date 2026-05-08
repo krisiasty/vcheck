@@ -252,17 +252,23 @@ func isBlacklisted(s rootRunner, mod string) (bool, error) {
 	// in /etc/modprobe.d. Allow leading whitespace and arbitrary spacing.
 	pattern := fmt.Sprintf(`^[[:space:]]*install[[:space:]]+%s[[:space:]]+/bin/false`, mod)
 	cmd := fmt.Sprintf("grep -r -E -h %s /etc/modprobe.d/ 2>/dev/null", shellQuote(pattern))
-	_, _, code, err := s.run(cmd)
+	_, stderr, code, err := s.run(cmd)
 	if err != nil {
 		return false, err
 	}
-	// grep: 0 = match, 1 = no match, 2 = error (treated as not found here)
-	return code == 0, nil
+	switch code {
+	case 0:
+		return true, nil
+	case 1:
+		return false, nil
+	default:
+		return false, fmt.Errorf("grep exit %d: %s", code, strings.TrimSpace(stderr))
+	}
 }
 
 func kernelLogTraces(s rootRunner, mod string) ([]string, error) {
-	// Prefer journalctl -k (journald systems); fall back to /var/log/kern.log
-	// where it exists. Both pipelines are joined so whichever produces output wins.
+	// Best-effort historical signal: read journalctl -k and /var/log/kern.log
+	// where available, then keep the last few matching lines.
 	cmd := fmt.Sprintf(
 		`{ journalctl -k --no-pager -q 2>/dev/null; cat /var/log/kern.log 2>/dev/null; } | grep -i %s | tail -n 5`,
 		shellQuote(mod),

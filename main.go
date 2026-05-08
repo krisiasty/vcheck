@@ -120,7 +120,7 @@ func main() {
 	}
 
 	if fix {
-		_, exitCode, err := applyFixAndReport(sudo, findings)
+		exitCode, err := applyFixAndReport(sudo, findings)
 		if err != nil {
 			slog.Error("fix failed", "err", err.Error())
 			os.Exit(exitInternal)
@@ -131,27 +131,27 @@ func main() {
 	os.Exit(classifyFindings(findings))
 }
 
-func applyFixAndReport(s rootRunner, findings []vulnFindings) ([]vulnFindings, int, error) {
+func applyFixAndReport(s rootRunner, findings []vulnFindings) (int, error) {
 	slog.Info("findings before fix")
 	exitCode := classifyFindings(findings)
 
 	written, err := applyFix(s, findings)
 	if err != nil {
-		return nil, 0, err
+		return 0, err
 	}
 	if written == 0 {
 		slog.Info("fix: nothing to do — all affected modules already blacklisted")
-		return findings, exitCode, nil
+		return exitCode, nil
 	}
 
 	slog.Info("re-scanning after fix", "snippets_written", written)
 	findings, err = runChecks(s)
 	if err != nil {
-		return nil, 0, fmt.Errorf("post-fix check execution failed: %w", err)
+		return 0, fmt.Errorf("post-fix check execution failed: %w", err)
 	}
 
 	slog.Info("findings after fix")
-	return findings, classifyFindings(findings), nil
+	return classifyFindings(findings), nil
 }
 
 func initLog(debug bool) {

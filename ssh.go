@@ -77,10 +77,12 @@ func tryAgentAuth() ssh.AuthMethod {
 	client := agent.NewClient(conn)
 	keys, err := client.List()
 	if err != nil {
+		_ = conn.Close()
 		slog.Debug("ssh-agent refused listing identities; skipping", "sock", sock, "err", err.Error())
 		return nil
 	}
 	if len(keys) == 0 {
+		_ = conn.Close()
 		slog.Debug("ssh-agent has no identities; skipping", "sock", sock)
 		return nil
 	}

@@ -9,11 +9,13 @@ kernel-module vulnerabilities and, optionally, apply mitigations:
 | CVE-2026-43284   | Dirty Frag (IPsec)   | `esp4`, `esp6`, `xfrm_algo`, `xfrm_user`      |
 | CVE-2026-43500   | Dirty Frag (RxRPC)   | `rxrpc`, `kafs`                               |
 
-For each affected module, vcheck reports whether it is currently loaded, has
-past traces in kernel logs, has live `AF_ALG` sockets (Copy Fail only), and
-whether it is already blacklisted under `/etc/modprobe.d/`.
+For each affected module, vcheck reports whether it is currently loaded, built
+into the running kernel, has past traces in kernel logs, has live `AF_ALG`
+sockets (Copy Fail only), and whether it is already blacklisted under
+`/etc/modprobe.d/`.
 
-With `-fix`, vcheck writes a `cve-XXXX-XXXXX-disable.conf` snippet for any module that is not yet
+With `-fix`, vcheck reports the initial state, writes a
+`cve-XXXX-XXXXX-disable.conf` snippet for any module that is not yet
 blacklisted, then re-runs the checks and reports the final state.
 
 ## Installation
@@ -63,7 +65,7 @@ otherwise it prompts once for a password (input is hidden) and feeds it via `sud
 
 | Code | Meaning                                                                            |
 | ---- | ---------------------------------------------------------------------------------- |
-| `0`  | All affected modules mitigated (blacklisted, not loaded, no active exposure)       |
+| `0`  | All affected modules blacklisted, unloaded, not built in, and inactive             |
 | `1`  | Usage error                                                                        |
 | `2`  | SSH connection failed                                                              |
 | `3`  | Sudo authentication failed                                                         |
