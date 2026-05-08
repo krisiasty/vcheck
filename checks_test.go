@@ -28,18 +28,27 @@ func (f fakeRunner) runStdin(cmd string, extraStdin io.Reader) (string, string, 
 	return f.runStdinFunc(cmd, extraStdin)
 }
 
-func TestAFAlgSocketsReturnsSSError(t *testing.T) {
+// On older iproute2 (pre-5.10), ss does not support --af-alg and exits non-zero
+// with an "unrecognized option" message on stderr. afAlgSockets must treat this
+// as a best-effort miss rather than fail the whole scan: the algif_aead module
+// is still covered by the lsmod, modules.builtin, kernel-log, and blacklist
+// checks, so dropping this one signal must not abort the run.
+func TestAFAlgSocketsSkipsOnSSFailure(t *testing.T) {
 	r := fakeRunner{
 		runFunc: func(cmd string) (string, string, int, error) {
 			if cmd != "ss -p --af-alg" {
 				t.Fatalf("unexpected command: %s", cmd)
 			}
-			return "", "ss: unrecognized option '--af-alg'", 1, nil
+			return "", "ss: unrecognized option '--af-alg'", 255, nil
 		},
 	}
 
-	if _, err := afAlgSockets(r); err == nil {
-		t.Fatal("expected ss failure to be returned")
+	got, err := afAlgSockets(r)
+	if err != nil {
+		t.Fatalf("afAlgSockets returned error on unsupported ss: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil socket list on unsupported ss, got %v", got)
 	}
 }
 
