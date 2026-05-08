@@ -33,7 +33,7 @@ go install github.com/krisiasty/vcheck@latest
 
 ## Usage
 
-```
+```text
 vcheck -host HOST [flags]
 ```
 
@@ -73,7 +73,7 @@ otherwise it prompts once for a password (input is hidden) and feeds it via `sud
 
 ### Fully mitigated host
 
-```
+```console
 $ vcheck -host host.example.com -identity ~/.ssh/id_ed25519
 INF connected user=ops host=host.example.com port=22
 INF checking vulnerability cve=CVE-2026-31431 name="Copy Fail"
@@ -86,7 +86,7 @@ INF mitigated cve=CVE-2026-43284 module=rxrpc
 
 ### Unmitigated and partially loaded — bare check
 
-```
+```console
 $ vcheck -host host.example.com -identity ~/.ssh/id_ed25519
 INF connected user=ops host=host.example.com port=22
 INF checking vulnerability cve=CVE-2026-31431 name="Copy Fail"
@@ -99,7 +99,7 @@ ERR module not blacklisted cve=CVE-2026-43284 module=rxrpc
 
 ### Same host with `-fix` — first run
 
-```
+```console
 $ vcheck -fix -host host.example.com -identity ~/.ssh/id_ed25519
 INF connected user=ops host=host.example.com port=22
 INF checking vulnerability cve=CVE-2026-31431 name="Copy Fail"
@@ -120,7 +120,7 @@ target to fully clear it.
 
 ### Second run — esp4 still loaded
 
-```
+```console
 $ vcheck -fix -host host.example.com -identity ~/.ssh/id_ed25519
 INF connected user=ops host=host.example.com port=22
 INF checking vulnerability cve=CVE-2026-31431 name="Copy Fail"
@@ -134,7 +134,7 @@ INF mitigated cve=CVE-2026-43284 module=rxrpc
 
 ### Third run — after `modprobe -r esp4`
 
-```
+```console
 $ vcheck -host host.example.com -identity ~/.ssh/id_ed25519
 INF connected user=ops host=host.example.com port=22
 INF checking vulnerability cve=CVE-2026-31431 name="Copy Fail"
@@ -147,7 +147,7 @@ INF mitigated cve=CVE-2026-43284 module=rxrpc
 
 ### First-time host — `-insecure`
 
-```
+```console
 $ vcheck -insecure -host host.example.com -identity ~/.ssh/id_ed25519
 WRN host key not in known_hosts; accepting due to -insecure host=host.example.com:22 remote=192.0.2.42:22 fingerprint=SHA256:AAAAEXAMPLEfingerPrint000000000000000000000
 INF connected user=ops host=host.example.com port=22
