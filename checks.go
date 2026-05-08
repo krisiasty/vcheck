@@ -300,7 +300,20 @@ func afAlgSockets(s rootRunner) ([]string, error) {
 		return nil, err
 	}
 	if code != 0 {
-		return nil, fmt.Errorf("ss --af-alg exit %d: %s", code, strings.TrimSpace(stderr))
+		// Best-effort signal — older iproute2 (pre-5.10ish) doesn't support
+		// `--af-alg`. Skip silently rather than fail the whole scan; the
+		// algif_aead module is still covered by the lsmod, modules.builtin,
+		// and modprobe.d blacklist checks.
+		msg := strings.TrimSpace(stderr)
+		if i := strings.IndexByte(msg, '\n'); i >= 0 {
+			msg = msg[:i]
+		}
+		if strings.Contains(msg, "unrecognized option") || strings.Contains(msg, "invalid option") {
+			slog.Warn("ss does not support --af-alg on this host; skipping socket enumeration")
+		} else {
+			slog.Warn("ss --af-alg failed; skipping socket enumeration", "exit", code, "stderr", msg)
+		}
+		return nil, nil
 	}
 	var lines []string
 	sc := bufio.NewScanner(strings.NewReader(stdout))
