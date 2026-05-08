@@ -1,12 +1,13 @@
 # vcheck
 
-Audit a remote Linux host over SSH for two kernel-module vulnerabilities and,
-optionally, apply mitigations:
+Audit a remote Linux host over SSH for the Copy Fail and Dirty Frag
+kernel-module vulnerabilities and, optionally, apply mitigations:
 
-| CVE              | Name       | Affected modules           |
-| ---------------- | ---------- | -------------------------- |
-| CVE-2026-31431   | Copy Fail  | `algif_aead`               |
-| CVE-2026-43284   | Dirty Frag | `esp4`, `esp6`, `rxrpc`    |
+| CVE              | Name                 | Affected modules                              |
+| ---------------- | -------------------- | --------------------------------------------- |
+| CVE-2026-31431   | Copy Fail            | `algif_aead`                                  |
+| CVE-2026-43284   | Dirty Frag (IPsec)   | `esp4`, `esp6`, `xfrm_algo`, `xfrm_user`      |
+| CVE-2026-43500   | Dirty Frag (RxRPC)   | `rxrpc`, `kafs`                               |
 
 For each affected module, vcheck reports whether it is currently loaded, has
 past traces in kernel logs, has live `AF_ALG` sockets (Copy Fail only), and
@@ -77,11 +78,15 @@ otherwise it prompts once for a password (input is hidden) and feeds it via `sud
 $ vcheck -host host.example.com -identity ~/.ssh/id_ed25519
 INF connected user=ops host=host.example.com port=22
 INF checking vulnerability cve=CVE-2026-31431 name="Copy Fail"
-INF checking vulnerability cve=CVE-2026-43284 name="Dirty Frag"
+INF checking vulnerability cve=CVE-2026-43284 name="Dirty Frag (IPsec)"
+INF checking vulnerability cve=CVE-2026-43500 name="Dirty Frag (RxRPC)"
 INF mitigated cve=CVE-2026-31431 module=algif_aead
 INF mitigated cve=CVE-2026-43284 module=esp4
 INF mitigated cve=CVE-2026-43284 module=esp6
-INF mitigated cve=CVE-2026-43284 module=rxrpc
+INF mitigated cve=CVE-2026-43284 module=xfrm_algo
+INF mitigated cve=CVE-2026-43284 module=xfrm_user
+INF mitigated cve=CVE-2026-43500 module=rxrpc
+INF mitigated cve=CVE-2026-43500 module=kafs
 ```
 
 ### Unmitigated and partially loaded — bare check
@@ -90,11 +95,15 @@ INF mitigated cve=CVE-2026-43284 module=rxrpc
 $ vcheck -host host.example.com -identity ~/.ssh/id_ed25519
 INF connected user=ops host=host.example.com port=22
 INF checking vulnerability cve=CVE-2026-31431 name="Copy Fail"
-INF checking vulnerability cve=CVE-2026-43284 name="Dirty Frag"
+INF checking vulnerability cve=CVE-2026-43284 name="Dirty Frag (IPsec)"
+INF checking vulnerability cve=CVE-2026-43500 name="Dirty Frag (RxRPC)"
 INF mitigated cve=CVE-2026-31431 module=algif_aead
 ERR VULNERABLE cve=CVE-2026-43284 module=esp4 loaded=true
 ERR module not blacklisted cve=CVE-2026-43284 module=esp6
-ERR module not blacklisted cve=CVE-2026-43284 module=rxrpc
+ERR module not blacklisted cve=CVE-2026-43284 module=xfrm_algo
+ERR module not blacklisted cve=CVE-2026-43284 module=xfrm_user
+ERR module not blacklisted cve=CVE-2026-43500 module=rxrpc
+ERR module not blacklisted cve=CVE-2026-43500 module=kafs
 ```
 
 ### Same host with `-fix` — first run
@@ -103,15 +112,21 @@ ERR module not blacklisted cve=CVE-2026-43284 module=rxrpc
 $ vcheck -fix -host host.example.com -identity ~/.ssh/id_ed25519
 INF connected user=ops host=host.example.com port=22
 INF checking vulnerability cve=CVE-2026-31431 name="Copy Fail"
-INF checking vulnerability cve=CVE-2026-43284 name="Dirty Frag"
-INF writing modprobe.d snippet path=/etc/modprobe.d/cve-2026-43284-disable.conf modules="[esp4 esp6 rxrpc]"
-INF re-scanning after fix snippets_written=1
+INF checking vulnerability cve=CVE-2026-43284 name="Dirty Frag (IPsec)"
+INF checking vulnerability cve=CVE-2026-43500 name="Dirty Frag (RxRPC)"
+INF writing modprobe.d snippet path=/etc/modprobe.d/cve-2026-43284-disable.conf modules="[esp4 esp6 xfrm_algo xfrm_user]"
+INF writing modprobe.d snippet path=/etc/modprobe.d/cve-2026-43500-disable.conf modules="[rxrpc kafs]"
+INF re-scanning after fix snippets_written=2
 INF checking vulnerability cve=CVE-2026-31431 name="Copy Fail"
-INF checking vulnerability cve=CVE-2026-43284 name="Dirty Frag"
+INF checking vulnerability cve=CVE-2026-43284 name="Dirty Frag (IPsec)"
+INF checking vulnerability cve=CVE-2026-43500 name="Dirty Frag (RxRPC)"
 INF mitigated cve=CVE-2026-31431 module=algif_aead
 ERR blacklisted but currently loaded; run 'modprobe -r' or reboot cve=CVE-2026-43284 module=esp4
 INF mitigated cve=CVE-2026-43284 module=esp6
-INF mitigated cve=CVE-2026-43284 module=rxrpc
+INF mitigated cve=CVE-2026-43284 module=xfrm_algo
+INF mitigated cve=CVE-2026-43284 module=xfrm_user
+INF mitigated cve=CVE-2026-43500 module=rxrpc
+INF mitigated cve=CVE-2026-43500 module=kafs
 ```
 
 The blacklist is in place, but `esp4` was already loaded into the kernel
@@ -124,12 +139,16 @@ target to fully clear it.
 $ vcheck -fix -host host.example.com -identity ~/.ssh/id_ed25519
 INF connected user=ops host=host.example.com port=22
 INF checking vulnerability cve=CVE-2026-31431 name="Copy Fail"
-INF checking vulnerability cve=CVE-2026-43284 name="Dirty Frag"
+INF checking vulnerability cve=CVE-2026-43284 name="Dirty Frag (IPsec)"
+INF checking vulnerability cve=CVE-2026-43500 name="Dirty Frag (RxRPC)"
 INF fix: nothing to do — all affected modules already blacklisted
 INF mitigated cve=CVE-2026-31431 module=algif_aead
 ERR blacklisted but currently loaded; run 'modprobe -r' or reboot cve=CVE-2026-43284 module=esp4
 INF mitigated cve=CVE-2026-43284 module=esp6
-INF mitigated cve=CVE-2026-43284 module=rxrpc
+INF mitigated cve=CVE-2026-43284 module=xfrm_algo
+INF mitigated cve=CVE-2026-43284 module=xfrm_user
+INF mitigated cve=CVE-2026-43500 module=rxrpc
+INF mitigated cve=CVE-2026-43500 module=kafs
 ```
 
 ### Third run — after `modprobe -r esp4`
@@ -138,11 +157,15 @@ INF mitigated cve=CVE-2026-43284 module=rxrpc
 $ vcheck -host host.example.com -identity ~/.ssh/id_ed25519
 INF connected user=ops host=host.example.com port=22
 INF checking vulnerability cve=CVE-2026-31431 name="Copy Fail"
-INF checking vulnerability cve=CVE-2026-43284 name="Dirty Frag"
+INF checking vulnerability cve=CVE-2026-43284 name="Dirty Frag (IPsec)"
+INF checking vulnerability cve=CVE-2026-43500 name="Dirty Frag (RxRPC)"
 INF mitigated cve=CVE-2026-31431 module=algif_aead
 INF mitigated cve=CVE-2026-43284 module=esp4
 INF mitigated cve=CVE-2026-43284 module=esp6
-INF mitigated cve=CVE-2026-43284 module=rxrpc
+INF mitigated cve=CVE-2026-43284 module=xfrm_algo
+INF mitigated cve=CVE-2026-43284 module=xfrm_user
+INF mitigated cve=CVE-2026-43500 module=rxrpc
+INF mitigated cve=CVE-2026-43500 module=kafs
 ```
 
 ### First-time host — `-insecure`

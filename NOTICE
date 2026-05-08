@@ -2,8 +2,8 @@ vcheck
 Copyright 2026 Krzysztof Ciepłucha <krisiasty@gmail.com>
 
 vcheck audits a remote Linux host over SSH for Copy Fail (CVE-2026-31431) and
-Dirty Frag (CVE-2026-43284) kernel-module exposure and, optionally, writes
-/etc/modprobe.d snippets to mitigate them.
+Dirty Frag (CVE-2026-43284, CVE-2026-43500) kernel-module exposure and,
+optionally, writes /etc/modprobe.d snippets to mitigate them.
 
 This product includes software developed by third parties, listed below.
 
