@@ -5,3 +5,4 @@ go.work.sum
 .env
 .vscode/
 .claude/
+dist/

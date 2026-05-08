@@ -15,6 +15,22 @@ whether it is already blacklisted under `/etc/modprobe.d/`.
 With `-fix`, vcheck writes a `cve-XXXX-XXXXX-disable.conf` snippet for any module that is not yet
 blacklisted, then re-runs the checks and reports the final state.
 
+## Installation
+
+**Homebrew (macOS):**
+
+```bash
+brew install krisiasty/tap/vcheck
+```
+
+**Pre-built binaries** for Linux, macOS, and Windows are published on the [releases page](https://github.com/krisiasty/vcheck/releases).
+
+**From source** (requires Go 1.26+):
+
+```bash
+go install github.com/krisiasty/vcheck@latest
+```
+
 ## Usage
 
 ```
