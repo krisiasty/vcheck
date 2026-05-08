@@ -18,6 +18,37 @@ With `-fix`, vcheck reports the initial state, writes a
 `cve-XXXX-XXXXX-disable.conf` snippet for any module that is not yet
 blacklisted, then re-runs the checks and reports the final state.
 
+## Use `-fix` only after a check-only run
+
+**Always run vcheck without `-fix` first.** Read the report and confirm the
+affected modules are safe to disable on this host before re-running with
+`-fix`. Disabling kernel modules that legitimate workloads depend on can
+affect users and break applications.
+
+In particular:
+
+- Treat `-fix` as safe **only** when none of the affected modules are
+  currently loaded — i.e. every module is reported as either `mitigated` or
+  `module not blacklisted` (no `VULNERABLE` or `blacklisted but currently
+  loaded` lines). A loaded module almost always means *something on the host
+  is actively using it*; verify that before blacklisting.
+- The IPsec modules (`esp4`, `esp6`, `xfrm_algo`, `xfrm_user`) are required
+  for any IPsec/strongSwan/WireGuard-over-IPsec/IKE deployment. Do not
+  blacklist them on a VPN gateway, IPsec endpoint, or anywhere
+  `ip xfrm policy` returns rules.
+- The RxRPC modules (`rxrpc`, `kafs`) are required for any host that mounts
+  AFS filesystems. Disabling them will break those mounts on the next boot.
+- `algif_aead` exposes kernel crypto via the `AF_ALG` socket family. It is
+  rarely used by application code directly, but verify by listing live
+  sockets (`ss -p --af-alg`) and checking userspace consumers before
+  blacklisting.
+
+The blacklist snippets vcheck writes only take effect at module-load time
+(typically next boot, or `modprobe -r <module>` while the system is idle).
+A module that is *already loaded* will keep running even after `-fix` —
+vcheck will report this as `blacklisted but currently loaded; run
+'modprobe -r' or reboot`.
+
 ## Installation
 
 **Homebrew (macOS):**
