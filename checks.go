@@ -267,17 +267,24 @@ func isBlacklisted(s rootRunner, mod string) (bool, error) {
 }
 
 func kernelLogTraces(s rootRunner, mod string) ([]string, error) {
-	// Best-effort historical signal: read journalctl -k and /var/log/kern.log
-	// where available, then keep the last few matching lines.
+	// Best-effort historical signal. Prefer journalctl --grep over piping the
+	// full -k output through external grep: --grep filters inside the binary
+	// journal format, which is much faster on hosts with a large journal.
+	// Fall back to /var/log/kern.log for non-systemd setups (or if journalctl
+	// returns nothing useful). Module names are all lowercase, so journalctl's
+	// case-insensitive auto-rule applies.
+	q := shellQuote(mod)
 	cmd := fmt.Sprintf(
-		`{ journalctl -k --no-pager -q 2>/dev/null; cat /var/log/kern.log 2>/dev/null; } | grep -i %s | tail -n 5`,
-		shellQuote(mod),
+		`{ journalctl -k --grep %s -n 5 --no-pager -q -o cat 2>/dev/null; `+
+			`grep -i %s /var/log/kern.log 2>/dev/null | tail -n 5; } | tail -n 5`,
+		q, q,
 	)
 	stdout, _, code, err := s.run(cmd)
 	if err != nil {
 		return nil, err
 	}
-	// Trailing tail can yield exit 0 even with no matches; grep yields 1 on no match.
+	// Trailing tail returns 0 even with no matches; intermediate greps may
+	// return 1 on no match but their output is captured before tail.
 	if code != 0 && code != 1 {
 		return nil, fmt.Errorf("log query exit %d", code)
 	}
