@@ -11,9 +11,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/skeema/knownhosts"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
-	"golang.org/x/crypto/ssh/knownhosts"
+	xkh "golang.org/x/crypto/ssh/knownhosts"
 )
 
 // authConfig collects the auth-related flags. Each enabled source contributes
@@ -114,14 +115,23 @@ func loadIdentity(path string) (ssh.Signer, error) {
 	return nil, err
 }
 
-// hostKeyCallback returns an ssh.HostKeyCallback that verifies against
-// known_hosts files. When acceptUnknown is true, hosts not yet recorded in
-// known_hosts are accepted with a warning; a key that *differs* from one
-// already recorded still fails, so a man-in-the-middle attack against a
-// previously-known host is still detected.
-// If no known_hosts file is present, acceptUnknown=true falls back to
-// fully unverified (warned), and acceptUnknown=false returns an error.
-func hostKeyCallback(acceptUnknown bool) (ssh.HostKeyCallback, error) {
+// hostKeyVerifier loads the known_hosts files and returns:
+//   - an ssh.HostKeyCallback that verifies against them (with the optional
+//     accept-unknown override behind -insecure);
+//   - a function that, given the dialed address, returns the list of host-key
+//     algorithms recorded in known_hosts for that host. Pinning the SSH
+//     client to that list makes Go negotiate the same algorithm OpenSSH
+//     would, avoiding spurious "key mismatch" errors on hosts that record
+//     multiple key types (RSA + ECDSA + ED25519). Returns nil when there's
+//     nothing recorded — the caller should leave HostKeyAlgorithms unset so
+//     the SSH library falls back to its default order.
+//
+// When acceptUnknown is true, hosts not yet recorded are accepted with a
+// warning; a key that *differs* from one already recorded still fails, so a
+// man-in-the-middle attack against a previously-known host is still detected.
+// If no known_hosts file is present, acceptUnknown=true falls back to fully
+// unverified (warned) and acceptUnknown=false returns an error.
+func hostKeyVerifier(acceptUnknown bool) (ssh.HostKeyCallback, func(addr string) []string, error) {
 	var paths []string
 	if home, err := os.UserHomeDir(); err == nil {
 		userKH := filepath.Join(home, ".ssh", "known_hosts")
@@ -136,30 +146,39 @@ func hostKeyCallback(acceptUnknown bool) (ssh.HostKeyCallback, error) {
 		if acceptUnknown {
 			slog.Warn("no known_hosts file present; host key will not be verified (-insecure)")
 			// #nosec G106 -- only reached when the user explicitly passes -insecure on a host with no known_hosts file at all
-			return ssh.InsecureIgnoreHostKey(), nil
+			return ssh.InsecureIgnoreHostKey(), nil, nil
 		}
-		return nil, fmt.Errorf("no known_hosts file found; ssh into the host once first to record its key, or pass -insecure")
+		return nil, nil, fmt.Errorf("no known_hosts file found; ssh into the host once first to record its key, or pass -insecure")
 	}
-	base, err := knownhosts.New(paths...)
+	db, err := knownhosts.NewDB(paths...)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if !acceptUnknown {
-		return base, nil
+	base := db.HostKeyCallback()
+	cb := func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		return base(hostname, remote, key)
 	}
-	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-		err := base(hostname, remote, key)
-		if err == nil {
-			return nil
+	if acceptUnknown {
+		cb = func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			err := base(hostname, remote, key)
+			if err == nil {
+				return nil
+			}
+			var ke *xkh.KeyError
+			if errors.As(err, &ke) && len(ke.Want) == 0 {
+				slog.Warn("host key not in known_hosts; accepting due to -insecure",
+					"host", hostname, "remote", remote.String(), "fingerprint", ssh.FingerprintSHA256(key))
+				return nil
+			}
+			return err
 		}
-		var ke *knownhosts.KeyError
-		if errors.As(err, &ke) && len(ke.Want) == 0 {
-			slog.Warn("host key not in known_hosts; accepting due to -insecure",
-				"host", hostname, "remote", remote.String(), "fingerprint", ssh.FingerprintSHA256(key))
-			return nil
-		}
-		return err
-	}, nil
+	}
+	algos := func(addr string) []string {
+		// Returns the algorithms recorded for `addr` in known_hosts, or an
+		// empty slice if the host isn't recorded yet.
+		return db.HostKeyAlgorithms(addr)
+	}
+	return cb, algos, nil
 }
 
 func dial(user, host string, port int, timeout time.Duration, ac authConfig, acceptUnknown bool) (*ssh.Client, error) {
@@ -167,15 +186,26 @@ func dial(user, host string, port int, timeout time.Duration, ac authConfig, acc
 	if err != nil {
 		return nil, err
 	}
-	hkc, err := hostKeyCallback(acceptUnknown)
+	hkc, algos, err := hostKeyVerifier(acceptUnknown)
 	if err != nil {
 		return nil, err
 	}
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	cfg := &ssh.ClientConfig{
 		User:            user,
 		Auth:            auth,
 		HostKeyCallback: hkc,
 		Timeout:         timeout,
 	}
-	return ssh.Dial("tcp", net.JoinHostPort(host, strconv.Itoa(port)), cfg)
+	if algos != nil {
+		// Pinning to recorded types avoids mismatches when the server offers
+		// multiple host-key types and Go's default order would pick a
+		// different one than the entry we have on file. Leave unset (Go
+		// default order) when nothing is recorded for this host yet.
+		if a := algos(addr); len(a) > 0 {
+			cfg.HostKeyAlgorithms = a
+			slog.Debug("pinned host-key algorithms from known_hosts", "addr", addr, "algorithms", a)
+		}
+	}
+	return ssh.Dial("tcp", addr, cfg)
 }
