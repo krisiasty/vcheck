@@ -20,6 +20,10 @@ blacklisted, then re-runs the checks and reports the final state.
 With `-fix -unload`, vcheck also tries to unload affected modules that were
 loaded before the fix, then uses the final scan to verify whether they are
 still loaded.
+With `-fix -rebuild-initramfs`, vcheck rebuilds the initramfs for the
+currently running kernel (only) after a snippet is written, so the blacklist
+is baked into the next boot image. Older kernel entries keep their original
+initramfs as a fallback.
 
 ## Use `-fix` only after a check-only run
 
@@ -61,6 +65,17 @@ Passing `-unload` with `-fix` asks vcheck to run `modprobe -r` for loaded
 affected modules after writing blacklist snippets. Use it only when you have
 confirmed the modules are safe to remove from the running kernel.
 
+Passing `-rebuild-initramfs` with `-fix` regenerates the initramfs for the
+**currently running kernel only** (`update-initramfs -u -k $(uname -r)` on
+Debian/Ubuntu, `dracut -f --kver $(uname -r)` on RHEL/Fedora). Other installed
+kernels keep their existing initramfs untouched, so if something goes wrong
+after reboot you can pick an older kernel entry from the boot menu and recover.
+Future kernel installs rebuild their own initramfs from the current
+`/etc/modprobe.d/` state, so the blacklist propagates automatically without
+re-running vcheck. If neither `update-initramfs` nor `dracut` is present (e.g.
+Arch, Alpine, immutable images), vcheck warns and continues — rebuild
+manually with the distro's tool before rebooting.
+
 ## Installation
 
 **Homebrew (macOS):**
@@ -83,20 +98,21 @@ go install github.com/krisiasty/vcheck@latest
 vcheck -host HOST [flags]
 ```
 
-| Flag                | Default       | Description                                                                                   |
-| ------------------- | ------------- | --------------------------------------------------------------------------------------------- |
-| `-host`             | *(required)*  | Remote host                                                                                   |
-| `-user`             | `$USER`       | Remote user                                                                                   |
-| `-port`             | `22`          | Remote SSH port                                                                               |
-| `-agent`            | `true`        | Use SSH agent for authentication                                                              |
-| `-identity`         | *(empty)*     | Path to a private key file (prompts for passphrase if encrypted)                              |
-| `-password`         | `false`       | Prompt for an SSH password                                                                    |
-| `-insecure`         | `false`       | Accept host keys not yet recorded in `known_hosts`; mismatches with a recorded key still fail |
-| `-fix`              | `false`       | Write `/etc/modprobe.d` snippets for modules that are not already blacklisted                 |
-| `-unload`           | `false`       | With `-fix`, unload affected modules after blacklisting them                                  |
-| `-skip-logs`        | `false`       | Skip kernel log history checks                                                                |
-| `-timeout`          | `15s`         | SSH connect timeout                                                                           |
-| `-command-timeout`  | `30s`         | Remote command timeout (`0` disables)                                                         |
+| Flag                 | Default       | Description                                                                                       |
+| -------------------- | ------------- | ------------------------------------------------------------------------------------------------- |
+| `-host`              | *(required)*  | Remote host                                                                                       |
+| `-user`              | `$USER`       | Remote user                                                                                       |
+| `-port`              | `22`          | Remote SSH port                                                                                   |
+| `-agent`             | `true`        | Use SSH agent for authentication                                                                  |
+| `-identity`          | *(empty)*     | Path to a private key file (prompts for passphrase if encrypted)                                  |
+| `-password`          | `false`       | Prompt for an SSH password                                                                        |
+| `-insecure`          | `false`       | Accept host keys not yet recorded in `known_hosts`; mismatches with a recorded key still fail     |
+| `-fix`               | `false`       | Write `/etc/modprobe.d` snippets for modules that are not already blacklisted                     |
+| `-unload`            | `false`       | With `-fix`, unload affected modules after blacklisting them                                      |
+| `-rebuild-initramfs` | `false`       | With `-fix`, rebuild initramfs for the running kernel only (`update-initramfs` or `dracut`)       |
+| `-skip-logs`         | `false`       | Skip kernel log history checks                                                                    |
+| `-timeout`           | `15s`         | SSH connect timeout                                                                               |
+| `-command-timeout`   | `30s`         | Remote command timeout (`0` disables)                                                             |
 | `-debug`            | `false`       | Increase log verbosity                                                                        |
 | `-version`          | `false`       | Show version and exit                                                                         |
 
@@ -232,6 +248,24 @@ INF mitigated cve=CVE-2026-43500 module=rxrpc
 INF mitigated cve=CVE-2026-43500 module=kafs
 ```
 
+### With `-rebuild-initramfs`
+
+```console
+$ vcheck -fix -rebuild-initramfs -host host.example.com -identity ~/.ssh/id_ed25519
+...
+INF writing modprobe.d snippet path=/etc/modprobe.d/cve-2026-43284-disable.conf modules="[esp4 esp6 ipcomp4 ipcomp6 xfrm_user]"
+INF writing modprobe.d snippet path=/etc/modprobe.d/cve-2026-43500-disable.conf modules="[rxrpc kafs]"
+INF initramfs rebuilt for running kernel tool=update-initramfs
+INF re-scanning after fix snippets_written=2
+...
+```
+
+Only the running kernel's initramfs is rebuilt. Other installed kernels keep
+their existing initramfs, so an older entry in the boot menu remains a working
+fallback if the new initramfs causes problems. On a host with neither
+`update-initramfs` nor `dracut`, vcheck logs
+`WRN no supported initramfs tool found ...` and continues.
+
 ### First-time host — `-insecure`
 
 ```console
@@ -266,4 +300,6 @@ man-in-the-middle warnings on a known host.
 All commands run via `sudo` and are bounded by `-command-timeout` — privileged
 access is required to read `/var/log/kern.log`, list `AF_ALG` sockets, and
 write under `/etc/modprobe.d/`. With `-unload`, privileged access is also
-required to run `modprobe -r`.
+required to run `modprobe -r`. With `-rebuild-initramfs`, vcheck runs
+`update-initramfs -u -k $(uname -r)` (Debian/Ubuntu) or
+`dracut -f --kver $(uname -r)` (RHEL/Fedora), which also need root.

@@ -245,6 +245,165 @@ func TestApplyFixAndReportReportsBeforeWriting(t *testing.T) {
 	}
 }
 
+func TestRebuildInitramfsLogsToolOnSuccess(t *testing.T) {
+	var logs bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+
+	r := fakeRunner{
+		runFunc: func(cmd string) (string, string, int, error) {
+			if !strings.Contains(cmd, "update-initramfs") || !strings.Contains(cmd, "dracut") {
+				t.Fatalf("expected combined detect+rebuild command, got: %s", cmd)
+			}
+			return "", "vcheck-initramfs-tool=update-initramfs\n", 0, nil
+		},
+	}
+
+	rebuildInitramfs(r)
+
+	out := logs.String()
+	if !strings.Contains(out, "initramfs rebuilt for running kernel") {
+		t.Fatalf("expected success log, got:\n%s", out)
+	}
+	if !strings.Contains(out, "tool=update-initramfs") {
+		t.Fatalf("expected tool=update-initramfs in log, got:\n%s", out)
+	}
+}
+
+func TestRebuildInitramfsWarnsWhenToolMissing(t *testing.T) {
+	var logs bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+
+	r := fakeRunner{
+		runFunc: func(cmd string) (string, string, int, error) {
+			return "", "vcheck-initramfs-tool=none\n", 127, nil
+		},
+	}
+
+	rebuildInitramfs(r)
+
+	out := logs.String()
+	if !strings.Contains(out, "no supported initramfs tool found") {
+		t.Fatalf("expected missing-tool warning, got:\n%s", out)
+	}
+}
+
+func TestRebuildInitramfsWarnsOnRebuildFailure(t *testing.T) {
+	var logs bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+
+	r := fakeRunner{
+		runFunc: func(cmd string) (string, string, int, error) {
+			return "", "vcheck-initramfs-tool=dracut\ndracut: cannot find kernel modules\n", 1, nil
+		},
+	}
+
+	rebuildInitramfs(r)
+
+	out := logs.String()
+	if !strings.Contains(out, "initramfs rebuild failed") {
+		t.Fatalf("expected failure warning, got:\n%s", out)
+	}
+	if !strings.Contains(out, "tool=dracut") {
+		t.Fatalf("expected tool=dracut in failure log, got:\n%s", out)
+	}
+	if strings.Contains(out, "vcheck-initramfs-tool=dracut") {
+		t.Fatalf("marker line should be stripped from logged stderr:\n%s", out)
+	}
+}
+
+func TestApplyFixAndReportRebuildsInitramfsWhenSnippetWritten(t *testing.T) {
+	var logs bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+
+	var rebuildCalls int
+	r := fakeRunner{
+		runFunc: func(cmd string) (string, string, int, error) {
+			switch {
+			case strings.Contains(cmd, "update-initramfs") && strings.Contains(cmd, "dracut"):
+				rebuildCalls++
+				return "", "vcheck-initramfs-tool=update-initramfs\n", 0, nil
+			case strings.Contains(cmd, "lsmod"):
+				return "Module                  Size  Used by\n", "", 0, nil
+			case strings.Contains(cmd, "modules.builtin"):
+				return "", "", 0, nil
+			case strings.HasPrefix(cmd, "for m in"):
+				return "", "", 0, nil
+			case cmd == "ss -p --af-alg":
+				return "Netid State Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n", "", 0, nil
+			case strings.HasPrefix(cmd, "grep -r -E -h"):
+				return "", "", 0, nil
+			case strings.Contains(cmd, "journalctl"):
+				return "", "", 0, nil
+			default:
+				return "", "", -1, fmt.Errorf("unexpected command: %s", cmd)
+			}
+		},
+		runStdinFunc: func(cmd string, extraStdin io.Reader) (string, string, int, error) {
+			return "", "", 0, nil
+		},
+	}
+	findings := []vulnFindings{
+		{
+			vuln: vulns[0],
+			modules: []moduleStatus{
+				{name: "algif_aead", loaded: true},
+			},
+		},
+	}
+
+	if _, err := applyFixAndReport(r, findings, fixOptions{checks: checkOptions{}, rebuildInitramfs: true}); err != nil {
+		t.Fatalf("applyFixAndReport returned error: %v", err)
+	}
+	if rebuildCalls != 1 {
+		t.Fatalf("rebuildInitramfs should run exactly once when a snippet is written, got %d", rebuildCalls)
+	}
+	if !strings.Contains(logs.String(), "initramfs rebuilt for running kernel") {
+		t.Fatalf("expected initramfs success log:\n%s", logs.String())
+	}
+}
+
+func TestApplyFixAndReportSkipsInitramfsWhenNothingWritten(t *testing.T) {
+	var logs bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+
+	r := fakeRunner{
+		runFunc: func(cmd string) (string, string, int, error) {
+			switch {
+			case strings.Contains(cmd, "update-initramfs") && strings.Contains(cmd, "dracut"):
+				t.Fatalf("rebuildInitramfs must not run when no snippet was written")
+				return "", "", 0, nil
+			default:
+				return "", "", -1, fmt.Errorf("unexpected command: %s", cmd)
+			}
+		},
+	}
+	findings := []vulnFindings{
+		{
+			vuln: vulns[0],
+			modules: []moduleStatus{
+				{name: "algif_aead", blacklisted: true},
+			},
+		},
+	}
+
+	if _, err := applyFixAndReport(r, findings, fixOptions{checks: checkOptions{}, rebuildInitramfs: true}); err != nil {
+		t.Fatalf("applyFixAndReport returned error: %v", err)
+	}
+	if strings.Contains(logs.String(), "initramfs rebuilt") {
+		t.Fatalf("did not expect initramfs rebuild log:\n%s", logs.String())
+	}
+}
+
 func TestApplyFixAndReportUnloadsAndRescans(t *testing.T) {
 	var logs bytes.Buffer
 	oldLogger := slog.Default()

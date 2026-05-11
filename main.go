@@ -37,6 +37,7 @@ func main() {
 		usePassword    bool
 		fix            bool
 		unload         bool
+		rebuildInit    bool
 		debug          bool
 		showVer        bool
 		insecure       bool
@@ -52,6 +53,7 @@ func main() {
 	flag.BoolVar(&usePassword, "password", false, "prompt for an SSH password")
 	flag.BoolVar(&fix, "fix", false, "write /etc/modprobe.d snippets disabling affected modules")
 	flag.BoolVar(&unload, "unload", false, "with -fix, unload affected modules after blacklisting them")
+	flag.BoolVar(&rebuildInit, "rebuild-initramfs", false, "with -fix, rebuild initramfs for the currently running kernel after writing snippets")
 	flag.BoolVar(&debug, "debug", false, "increase log verbosity")
 	flag.BoolVar(&showVer, "version", false, "show version and exit")
 	flag.BoolVar(&insecure, "insecure", false, "accept host keys not yet recorded in known_hosts; mismatches with a recorded key still fail")
@@ -78,6 +80,10 @@ func main() {
 
 	if unload && !fix {
 		slog.Error("-unload requires -fix")
+		os.Exit(exitUsage)
+	}
+	if rebuildInit && !fix {
+		slog.Error("-rebuild-initramfs requires -fix")
 		os.Exit(exitUsage)
 	}
 	if host == "" {
@@ -129,7 +135,7 @@ func main() {
 	}
 
 	if fix {
-		exitCode, err := applyFixAndReport(sudo, findings, fixOptions{checks: checkOpts, unload: unload})
+		exitCode, err := applyFixAndReport(sudo, findings, fixOptions{checks: checkOpts, unload: unload, rebuildInitramfs: rebuildInit})
 		if err != nil {
 			slog.Error("fix failed", "err", err.Error())
 			os.Exit(exitInternal)
@@ -141,8 +147,9 @@ func main() {
 }
 
 type fixOptions struct {
-	checks checkOptions
-	unload bool
+	checks           checkOptions
+	unload           bool
+	rebuildInitramfs bool
 }
 
 func applyFixAndReport(s rootRunner, findings []vulnFindings, opts fixOptions) (int, error) {
@@ -155,6 +162,9 @@ func applyFixAndReport(s rootRunner, findings []vulnFindings, opts fixOptions) (
 	}
 	if opts.unload {
 		unloadLoadedModules(s, findings)
+	}
+	if opts.rebuildInitramfs && written > 0 {
+		rebuildInitramfs(s)
 	}
 	if written == 0 && !opts.unload {
 		slog.Info("fix: nothing to do — all affected modules already blacklisted")

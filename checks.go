@@ -482,6 +482,72 @@ func loadedAffectedModules(findings []vulnFindings) []string {
 	return modules
 }
 
+// rebuildInitramfs regenerates the initramfs for the currently running kernel
+// so the blacklist takes effect on next boot. Older kernel entries keep their
+// original initramfs, giving the operator a known-good fallback if the new
+// initramfs misbehaves. Only Debian-family (update-initramfs) and Red Hat
+// family (dracut) tools are supported; on anything else the step is skipped
+// with a warning so the run still completes.
+func rebuildInitramfs(s rootRunner) {
+	// Single shell command: detect the tool, capture which one we used into a
+	// known stderr marker, and rebuild only the running kernel's initramfs.
+	// Falling out of both branches is the "no supported tool" case.
+	cmd := `k=$(uname -r); ` +
+		`if command -v update-initramfs >/dev/null 2>&1; then ` +
+		`  echo "vcheck-initramfs-tool=update-initramfs" >&2; ` +
+		`  update-initramfs -u -k "$k"; ` +
+		`elif command -v dracut >/dev/null 2>&1; then ` +
+		`  echo "vcheck-initramfs-tool=dracut" >&2; ` +
+		`  dracut -f --kver "$k"; ` +
+		`else ` +
+		`  echo "vcheck-initramfs-tool=none" >&2; ` +
+		`  exit 127; ` +
+		`fi`
+	_, stderr, code, err := s.run(cmd)
+	tool := initramfsToolFromStderr(stderr)
+	if err != nil {
+		slog.Warn("initramfs rebuild failed; rebuild manually before reboot",
+			"tool", tool, "err", err.Error())
+		return
+	}
+	if tool == "none" {
+		slog.Warn("no supported initramfs tool found (update-initramfs, dracut); rebuild manually before reboot")
+		return
+	}
+	if code != 0 {
+		slog.Warn("initramfs rebuild failed; rebuild manually before reboot",
+			"tool", tool, "exit", code, "stderr", strings.TrimSpace(stripInitramfsMarker(stderr)))
+		return
+	}
+	slog.Info("initramfs rebuilt for running kernel", "tool", tool)
+}
+
+func initramfsToolFromStderr(stderr string) string {
+	const marker = "vcheck-initramfs-tool="
+	i := strings.Index(stderr, marker)
+	if i < 0 {
+		return "unknown"
+	}
+	rest := stderr[i+len(marker):]
+	if j := strings.IndexAny(rest, "\r\n"); j >= 0 {
+		rest = rest[:j]
+	}
+	return strings.TrimSpace(rest)
+}
+
+func stripInitramfsMarker(stderr string) string {
+	var out strings.Builder
+	sc := bufio.NewScanner(strings.NewReader(stderr))
+	for sc.Scan() {
+		if strings.HasPrefix(strings.TrimSpace(sc.Text()), "vcheck-initramfs-tool=") {
+			continue
+		}
+		out.WriteString(sc.Text())
+		out.WriteByte('\n')
+	}
+	return out.String()
+}
+
 func writeRootFile(s rootRunner, path, content string) error {
 	cmd := fmt.Sprintf("install -m 0644 -o root -g root /dev/stdin %s", shellQuote(path))
 	_, stderr, code, err := s.runStdin(cmd, strings.NewReader(content))
