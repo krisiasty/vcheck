@@ -17,6 +17,9 @@ sockets (Copy Fail only), and whether it is already blacklisted under
 With `-fix`, vcheck reports the initial state, writes a
 `cve-XXXX-XXXXX-disable.conf` snippet for any module that is not yet
 blacklisted, then re-runs the checks and reports the final state.
+With `-fix -unload`, vcheck also tries to unload affected modules that were
+loaded before the fix, then uses the final scan to verify whether they are
+still loaded.
 
 ## Use `-fix` only after a check-only run
 
@@ -48,6 +51,9 @@ The blacklist snippets vcheck writes only take effect at module-load time
 A module that is *already loaded* will keep running even after `-fix` —
 vcheck will report this as `blacklisted but currently loaded; run
 'modprobe -r' or reboot`.
+Passing `-unload` with `-fix` asks vcheck to run `modprobe -r` for loaded
+affected modules after writing blacklist snippets. Use it only when you have
+confirmed the modules are safe to remove from the running kernel.
 
 ## Installation
 
@@ -81,6 +87,7 @@ vcheck -host HOST [flags]
 | `-password`         | `false`       | Prompt for an SSH password                                                                    |
 | `-insecure`         | `false`       | Accept host keys not yet recorded in `known_hosts`; mismatches with a recorded key still fail |
 | `-fix`              | `false`       | Write `/etc/modprobe.d` snippets for modules that are not already blacklisted                 |
+| `-unload`           | `false`       | With `-fix`, unload affected modules after blacklisting them                                  |
 | `-skip-logs`        | `false`       | Skip kernel log history checks                                                                |
 | `-timeout`          | `15s`         | SSH connect timeout                                                                           |
 | `-command-timeout`  | `30s`         | Remote command timeout (`0` disables)                                                         |
@@ -246,4 +253,5 @@ man-in-the-middle warnings on a known host.
 
 All commands run via `sudo` and are bounded by `-command-timeout` — privileged
 access is required to read `/var/log/kern.log`, list `AF_ALG` sockets, and
-write under `/etc/modprobe.d/`.
+write under `/etc/modprobe.d/`. With `-unload`, privileged access is also
+required to run `modprobe -r`.

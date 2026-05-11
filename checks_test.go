@@ -224,7 +224,7 @@ func TestApplyFixAndReportReportsBeforeWriting(t *testing.T) {
 		},
 	}
 
-	code, err := applyFixAndReport(r, findings, checkOptions{})
+	code, err := applyFixAndReport(r, findings, fixOptions{checks: checkOptions{}})
 	if err != nil {
 		t.Fatalf("applyFixAndReport returned error: %v", err)
 	}
@@ -242,5 +242,76 @@ func TestApplyFixAndReportReportsBeforeWriting(t *testing.T) {
 	}
 	if before >= vulnerable || vulnerable >= write || write >= after {
 		t.Fatalf("expected findings before write and post-fix report after write:\n%s", out)
+	}
+}
+
+func TestApplyFixAndReportUnloadsAndRescans(t *testing.T) {
+	var logs bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+
+	var events []string
+	r := fakeRunner{
+		runFunc: func(cmd string) (string, string, int, error) {
+			switch {
+			case strings.Contains(cmd, "modprobe") && strings.Contains(cmd, "-r 'esp4'"):
+				events = append(events, "unload esp4")
+				return "", "", 0, nil
+			case strings.Contains(cmd, "modprobe") && strings.Contains(cmd, "-r 'esp6'"):
+				events = append(events, "unload esp6")
+				return "", "module in use", 1, nil
+			case strings.Contains(cmd, "lsmod"):
+				return "Module                  Size  Used by\nesp6                    1     0\n", "", 0, nil
+			case strings.Contains(cmd, "modules.builtin"):
+				return "", "", 0, nil
+			case strings.HasPrefix(cmd, "for m in"):
+				return "", "", 0, nil
+			case cmd == "ss -p --af-alg":
+				return "Netid State Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n", "", 0, nil
+			case strings.HasPrefix(cmd, "grep -r -E -h"):
+				return "", "", 0, nil
+			case strings.Contains(cmd, "journalctl"):
+				return "", "", 0, nil
+			default:
+				return "", "", -1, fmt.Errorf("unexpected command: %s", cmd)
+			}
+		},
+		runStdinFunc: func(cmd string, extraStdin io.Reader) (string, string, int, error) {
+			events = append(events, "write")
+			if !strings.Contains(cmd, "/etc/modprobe.d/cve-2026-43284-disable.conf") {
+				t.Fatalf("unexpected write command: %s", cmd)
+			}
+			return "", "", 0, nil
+		},
+	}
+	findings := []vulnFindings{
+		{
+			vuln: vulns[1],
+			modules: []moduleStatus{
+				{name: "esp4", loaded: true},
+				{name: "esp6", loaded: true},
+			},
+		},
+	}
+
+	code, err := applyFixAndReport(r, findings, fixOptions{checks: checkOptions{}, unload: true})
+	if err != nil {
+		t.Fatalf("applyFixAndReport returned error: %v", err)
+	}
+	if code != exitVulnerable {
+		t.Fatalf("applyFixAndReport exit code = %d, want %d", code, exitVulnerable)
+	}
+	wantEvents := []string{"write", "unload esp4", "unload esp6"}
+	if strings.Join(events, ",") != strings.Join(wantEvents, ",") {
+		t.Fatalf("events = %v, want %v", events, wantEvents)
+	}
+
+	out := logs.String()
+	if !strings.Contains(out, "module unloaded") || !strings.Contains(out, "module unload failed") {
+		t.Fatalf("expected unload success and failure logs:\n%s", out)
+	}
+	if !strings.Contains(out, "findings after fix") || !strings.Contains(out, "blacklisted but currently loaded") {
+		t.Fatalf("expected post-unload rescan to report loaded module:\n%s", out)
 	}
 }

@@ -437,6 +437,51 @@ func applyFix(s rootRunner, findings []vulnFindings) (int, error) {
 	return written, nil
 }
 
+func unloadLoadedModules(s rootRunner, findings []vulnFindings) {
+	modules := loadedAffectedModules(findings)
+	if len(modules) == 0 {
+		slog.Info("unload: nothing to do — no affected modules loaded")
+		return
+	}
+
+	for _, mod := range modules {
+		cmd := fmt.Sprintf(
+			`p=$(command -v modprobe || true); `+
+				`if [ -z "$p" ]; then if [ -x /usr/sbin/modprobe ]; then p=/usr/sbin/modprobe; else p=/sbin/modprobe; fi; fi; `+
+				`"$p" -r %s`,
+			shellQuote(mod),
+		)
+		_, stderr, code, err := s.run(cmd)
+		if err != nil {
+			slog.Warn("module unload failed", "module", mod, "err", err.Error())
+			continue
+		}
+		if code != 0 {
+			slog.Warn("module unload failed", "module", mod, "exit", code, "stderr", strings.TrimSpace(stderr))
+			continue
+		}
+		slog.Info("module unloaded", "module", mod)
+	}
+}
+
+func loadedAffectedModules(findings []vulnFindings) []string {
+	seen := make(map[string]struct{})
+	var modules []string
+	for _, f := range findings {
+		for _, m := range f.modules {
+			if !m.loaded {
+				continue
+			}
+			if _, ok := seen[m.name]; ok {
+				continue
+			}
+			seen[m.name] = struct{}{}
+			modules = append(modules, m.name)
+		}
+	}
+	return modules
+}
+
 func writeRootFile(s rootRunner, path, content string) error {
 	cmd := fmt.Sprintf("install -m 0644 -o root -g root /dev/stdin %s", shellQuote(path))
 	_, stderr, code, err := s.runStdin(cmd, strings.NewReader(content))

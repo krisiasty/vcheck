@@ -36,6 +36,7 @@ func main() {
 		identity       string
 		usePassword    bool
 		fix            bool
+		unload         bool
 		debug          bool
 		showVer        bool
 		insecure       bool
@@ -50,6 +51,7 @@ func main() {
 	flag.StringVar(&identity, "identity", "", "path to private key file")
 	flag.BoolVar(&usePassword, "password", false, "prompt for an SSH password")
 	flag.BoolVar(&fix, "fix", false, "write /etc/modprobe.d snippets disabling affected modules")
+	flag.BoolVar(&unload, "unload", false, "with -fix, unload affected modules after blacklisting them")
 	flag.BoolVar(&debug, "debug", false, "increase log verbosity")
 	flag.BoolVar(&showVer, "version", false, "show version and exit")
 	flag.BoolVar(&insecure, "insecure", false, "accept host keys not yet recorded in known_hosts; mismatches with a recorded key still fail")
@@ -74,6 +76,10 @@ func main() {
 
 	initLog(debug)
 
+	if unload && !fix {
+		slog.Error("-unload requires -fix")
+		os.Exit(exitUsage)
+	}
 	if host == "" {
 		flag.Usage()
 		os.Exit(exitUsage)
@@ -123,7 +129,7 @@ func main() {
 	}
 
 	if fix {
-		exitCode, err := applyFixAndReport(sudo, findings, checkOpts)
+		exitCode, err := applyFixAndReport(sudo, findings, fixOptions{checks: checkOpts, unload: unload})
 		if err != nil {
 			slog.Error("fix failed", "err", err.Error())
 			os.Exit(exitInternal)
@@ -134,7 +140,12 @@ func main() {
 	os.Exit(classifyFindings(findings))
 }
 
-func applyFixAndReport(s rootRunner, findings []vulnFindings, opts checkOptions) (int, error) {
+type fixOptions struct {
+	checks checkOptions
+	unload bool
+}
+
+func applyFixAndReport(s rootRunner, findings []vulnFindings, opts fixOptions) (int, error) {
 	slog.Info("findings before fix")
 	exitCode := classifyFindings(findings)
 
@@ -142,13 +153,16 @@ func applyFixAndReport(s rootRunner, findings []vulnFindings, opts checkOptions)
 	if err != nil {
 		return 0, err
 	}
-	if written == 0 {
+	if opts.unload {
+		unloadLoadedModules(s, findings)
+	}
+	if written == 0 && !opts.unload {
 		slog.Info("fix: nothing to do — all affected modules already blacklisted")
 		return exitCode, nil
 	}
 
 	slog.Info("re-scanning after fix", "snippets_written", written)
-	findings, err = runChecks(s, opts)
+	findings, err = runChecks(s, opts.checks)
 	if err != nil {
 		return 0, fmt.Errorf("post-fix check execution failed: %w", err)
 	}
