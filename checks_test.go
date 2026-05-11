@@ -144,6 +144,42 @@ func TestIsBlacklistedReturnsGrepErrors(t *testing.T) {
 	}
 }
 
+func TestRunChecksSkipsKernelLogs(t *testing.T) {
+	r := fakeRunner{
+		runFunc: func(cmd string) (string, string, int, error) {
+			switch {
+			case strings.Contains(cmd, "journalctl") || strings.Contains(cmd, "/var/log/kern.log"):
+				t.Fatalf("kernel log command should be skipped: %s", cmd)
+			case strings.Contains(cmd, "lsmod"):
+				return "Module                  Size  Used by\n", "", 0, nil
+			case strings.Contains(cmd, "modules.builtin"):
+				return "", "", 0, nil
+			case strings.HasPrefix(cmd, "for m in"):
+				return "", "", 0, nil
+			case cmd == "ss -p --af-alg":
+				return "Netid State Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n", "", 0, nil
+			case strings.HasPrefix(cmd, "grep -r -E -h"):
+				return "", "", 1, nil
+			default:
+				return "", "", -1, fmt.Errorf("unexpected command: %s", cmd)
+			}
+			return "", "", 0, nil
+		},
+	}
+
+	findings, err := runChecks(r, checkOptions{skipLogs: true})
+	if err != nil {
+		t.Fatalf("runChecks returned error: %v", err)
+	}
+	for _, f := range findings {
+		for _, m := range f.modules {
+			if len(m.logTraces) != 0 {
+				t.Fatalf("expected no log traces for %s, got %#v", m.name, m.logTraces)
+			}
+		}
+	}
+}
+
 func TestApplyFixAndReportReportsBeforeWriting(t *testing.T) {
 	var logs bytes.Buffer
 	oldLogger := slog.Default()
@@ -188,7 +224,7 @@ func TestApplyFixAndReportReportsBeforeWriting(t *testing.T) {
 		},
 	}
 
-	code, err := applyFixAndReport(r, findings)
+	code, err := applyFixAndReport(r, findings, checkOptions{})
 	if err != nil {
 		t.Fatalf("applyFixAndReport returned error: %v", err)
 	}

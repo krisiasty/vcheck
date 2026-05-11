@@ -39,6 +39,7 @@ func main() {
 		debug          bool
 		showVer        bool
 		insecure       bool
+		skipLogs       bool
 		connectTimeout time.Duration
 		commandTimeout time.Duration
 	)
@@ -52,6 +53,7 @@ func main() {
 	flag.BoolVar(&debug, "debug", false, "increase log verbosity")
 	flag.BoolVar(&showVer, "version", false, "show version and exit")
 	flag.BoolVar(&insecure, "insecure", false, "accept host keys not yet recorded in known_hosts; mismatches with a recorded key still fail")
+	flag.BoolVar(&skipLogs, "skip-logs", false, "skip kernel log history checks")
 	flag.DurationVar(&connectTimeout, "timeout", 15*time.Second, "SSH connect timeout")
 	flag.DurationVar(&commandTimeout, "command-timeout", 30*time.Second, "remote command timeout (0 disables)")
 
@@ -113,14 +115,15 @@ func main() {
 		slog.Debug("sudo: password authenticated")
 	}
 
-	findings, err := runChecks(sudo)
+	checkOpts := checkOptions{skipLogs: skipLogs}
+	findings, err := runChecks(sudo, checkOpts)
 	if err != nil {
 		slog.Error("check execution failed", "err", err.Error())
 		os.Exit(exitInternal)
 	}
 
 	if fix {
-		exitCode, err := applyFixAndReport(sudo, findings)
+		exitCode, err := applyFixAndReport(sudo, findings, checkOpts)
 		if err != nil {
 			slog.Error("fix failed", "err", err.Error())
 			os.Exit(exitInternal)
@@ -131,7 +134,7 @@ func main() {
 	os.Exit(classifyFindings(findings))
 }
 
-func applyFixAndReport(s rootRunner, findings []vulnFindings) (int, error) {
+func applyFixAndReport(s rootRunner, findings []vulnFindings, opts checkOptions) (int, error) {
 	slog.Info("findings before fix")
 	exitCode := classifyFindings(findings)
 
@@ -145,7 +148,7 @@ func applyFixAndReport(s rootRunner, findings []vulnFindings) (int, error) {
 	}
 
 	slog.Info("re-scanning after fix", "snippets_written", written)
-	findings, err = runChecks(s)
+	findings, err = runChecks(s, opts)
 	if err != nil {
 		return 0, fmt.Errorf("post-fix check execution failed: %w", err)
 	}

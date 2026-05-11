@@ -81,6 +81,7 @@ vcheck -host HOST [flags]
 | `-password`         | `false`       | Prompt for an SSH password                                                                    |
 | `-insecure`         | `false`       | Accept host keys not yet recorded in `known_hosts`; mismatches with a recorded key still fail |
 | `-fix`              | `false`       | Write `/etc/modprobe.d` snippets for modules that are not already blacklisted                 |
+| `-skip-logs`        | `false`       | Skip kernel log history checks                                                                |
 | `-timeout`          | `15s`         | SSH connect timeout                                                                           |
 | `-command-timeout`  | `30s`         | Remote command timeout (`0` disables)                                                         |
 | `-debug`            | `false`       | Increase log verbosity                                                                        |
@@ -238,7 +239,8 @@ man-in-the-middle warnings on a known host.
   for an `install <module> /bin/false` directive — the same form vcheck writes
   with `-fix`. Other forms of disabling (e.g. `blacklist`) are not recognized.
 - **Past activity:** `journalctl -k` is consulted first, with a fallback to
-  `/var/log/kern.log`; the last five matching lines per module are kept.
+  `/var/log/kern.log`; the last five matching lines per module are kept. Pass
+  `-skip-logs` to skip this step.
 - **Active sockets (`algif_aead` only):** `ss -p --af-alg` lists open
   `AF_ALG` sockets; any output other than the header counts as live use.
 

@@ -42,7 +42,11 @@ type vulnFindings struct {
 	modules []moduleStatus
 }
 
-func runChecks(s rootRunner) ([]vulnFindings, error) {
+type checkOptions struct {
+	skipLogs bool
+}
+
+func runChecks(s rootRunner, opts checkOptions) ([]vulnFindings, error) {
 	loaded, err := loadedModules(s)
 	if err != nil {
 		return nil, fmt.Errorf("lsmod: %w", err)
@@ -86,14 +90,18 @@ func runChecks(s rootRunner) ([]vulnFindings, error) {
 			ms.blacklisted = bl
 			slog.Debug("module blacklist check", "module", m, "blacklisted", bl)
 
-			traces, err := kernelLogTraces(s, m)
-			if err != nil {
-				return nil, fmt.Errorf("kernel log %s: %w", m, err)
-			}
-			ms.logTraces = traces
-			slog.Debug("module log trace check", "module", m, "lines", len(traces))
-			for _, line := range traces {
-				slog.Debug("log trace", "module", m, "line", line)
+			if opts.skipLogs {
+				slog.Debug("module log trace check skipped", "module", m)
+			} else {
+				traces, err := kernelLogTraces(s, m)
+				if err != nil {
+					return nil, fmt.Errorf("kernel log %s: %w", m, err)
+				}
+				ms.logTraces = traces
+				slog.Debug("module log trace check", "module", m, "lines", len(traces))
+				for _, line := range traces {
+					slog.Debug("log trace", "module", m, "line", line)
+				}
 			}
 
 			if v.afAlg {
