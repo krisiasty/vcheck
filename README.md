@@ -3,11 +3,11 @@
 Audit a remote Linux host over SSH for the Copy Fail and Dirty Frag
 kernel-module vulnerabilities and, optionally, apply mitigations:
 
-| CVE              | Name                 | Affected modules                              |
-| ---------------- | -------------------- | --------------------------------------------- |
-| CVE-2026-31431   | Copy Fail            | `algif_aead`                                  |
-| CVE-2026-43284   | Dirty Frag (IPsec)   | `esp4`, `esp6`, `xfrm_algo`, `xfrm_user`      |
-| CVE-2026-43500   | Dirty Frag (RxRPC)   | `rxrpc`, `kafs`                               |
+| CVE              | Name                 | Affected modules                                          |
+| ---------------- | -------------------- | --------------------------------------------------------- |
+| CVE-2026-31431   | Copy Fail            | `algif_aead`                                              |
+| CVE-2026-43284   | Dirty Frag (IPsec)   | `esp4`, `esp6`, `ipcomp4`, `ipcomp6`, `xfrm_user`         |
+| CVE-2026-43500   | Dirty Frag (RxRPC)   | `rxrpc`, `kafs`                                           |
 
 For each affected module, vcheck reports whether it is currently loaded, built
 into the running kernel, has past traces in kernel logs, has live `AF_ALG`
@@ -35,10 +35,16 @@ In particular:
   `module not blacklisted` (no `VULNERABLE` or `blacklisted but currently
   loaded` lines). A loaded module almost always means *something on the host
   is actively using it*; verify that before blacklisting.
-- The IPsec modules (`esp4`, `esp6`, `xfrm_algo`, `xfrm_user`) are required
-  for any IPsec/strongSwan/WireGuard-over-IPsec/IKE deployment. Do not
-  blacklist them on a VPN gateway, IPsec endpoint, or anywhere
-  `ip xfrm policy` returns rules.
+- The IPsec modules (`esp4`, `esp6`, `ipcomp4`, `ipcomp6`, `xfrm_user`) are
+  required for any IPsec/strongSwan/WireGuard-over-IPsec/IKE deployment. The
+  `ipcomp4`/`ipcomp6` modules implement IPComp payload compression and may be
+  auto-negotiated as part of an IPsec SA even when not explicitly configured.
+  Do not blacklist any of them on a VPN gateway, IPsec endpoint, or anywhere
+  `ip xfrm policy` returns rules. Note that the `xfrm_algo` framework module
+  is intentionally **not** in this list — per vendor guidance (Red Hat,
+  Ubuntu, AWS), blocking the ESP and IPComp protocol modules plus the
+  `xfrm_user` netlink configuration interface is sufficient, and blacklisting
+  `xfrm_algo` would break every other xfrm transform for no extra benefit.
 - The RxRPC modules (`rxrpc`, `kafs`) are required for any host that mounts
   AFS filesystems. Disabling them will break those mounts on the next boot.
 - `algif_aead` exposes kernel crypto via the `AF_ALG` socket family. It is
@@ -125,7 +131,8 @@ INF checking vulnerability cve=CVE-2026-43500 name="Dirty Frag (RxRPC)"
 INF mitigated cve=CVE-2026-31431 module=algif_aead
 INF mitigated cve=CVE-2026-43284 module=esp4
 INF mitigated cve=CVE-2026-43284 module=esp6
-INF mitigated cve=CVE-2026-43284 module=xfrm_algo
+INF mitigated cve=CVE-2026-43284 module=ipcomp4
+INF mitigated cve=CVE-2026-43284 module=ipcomp6
 INF mitigated cve=CVE-2026-43284 module=xfrm_user
 INF mitigated cve=CVE-2026-43500 module=rxrpc
 INF mitigated cve=CVE-2026-43500 module=kafs
@@ -142,7 +149,8 @@ INF checking vulnerability cve=CVE-2026-43500 name="Dirty Frag (RxRPC)"
 INF mitigated cve=CVE-2026-31431 module=algif_aead
 ERR VULNERABLE cve=CVE-2026-43284 module=esp4 loaded=true
 ERR module not blacklisted cve=CVE-2026-43284 module=esp6
-ERR module not blacklisted cve=CVE-2026-43284 module=xfrm_algo
+ERR module not blacklisted cve=CVE-2026-43284 module=ipcomp4
+ERR module not blacklisted cve=CVE-2026-43284 module=ipcomp6
 ERR module not blacklisted cve=CVE-2026-43284 module=xfrm_user
 ERR module not blacklisted cve=CVE-2026-43500 module=rxrpc
 ERR module not blacklisted cve=CVE-2026-43500 module=kafs
@@ -160,11 +168,12 @@ INF findings before fix
 INF mitigated cve=CVE-2026-31431 module=algif_aead
 ERR VULNERABLE cve=CVE-2026-43284 module=esp4 loaded=true
 ERR module not blacklisted cve=CVE-2026-43284 module=esp6
-ERR module not blacklisted cve=CVE-2026-43284 module=xfrm_algo
+ERR module not blacklisted cve=CVE-2026-43284 module=ipcomp4
+ERR module not blacklisted cve=CVE-2026-43284 module=ipcomp6
 ERR module not blacklisted cve=CVE-2026-43284 module=xfrm_user
 ERR module not blacklisted cve=CVE-2026-43500 module=rxrpc
 ERR module not blacklisted cve=CVE-2026-43500 module=kafs
-INF writing modprobe.d snippet path=/etc/modprobe.d/cve-2026-43284-disable.conf modules="[esp4 esp6 xfrm_algo xfrm_user]"
+INF writing modprobe.d snippet path=/etc/modprobe.d/cve-2026-43284-disable.conf modules="[esp4 esp6 ipcomp4 ipcomp6 xfrm_user]"
 INF writing modprobe.d snippet path=/etc/modprobe.d/cve-2026-43500-disable.conf modules="[rxrpc kafs]"
 INF re-scanning after fix snippets_written=2
 INF checking vulnerability cve=CVE-2026-31431 name="Copy Fail"
@@ -174,7 +183,8 @@ INF findings after fix
 INF mitigated cve=CVE-2026-31431 module=algif_aead
 ERR blacklisted but currently loaded; run 'modprobe -r' or reboot cve=CVE-2026-43284 module=esp4
 INF mitigated cve=CVE-2026-43284 module=esp6
-INF mitigated cve=CVE-2026-43284 module=xfrm_algo
+INF mitigated cve=CVE-2026-43284 module=ipcomp4
+INF mitigated cve=CVE-2026-43284 module=ipcomp6
 INF mitigated cve=CVE-2026-43284 module=xfrm_user
 INF mitigated cve=CVE-2026-43500 module=rxrpc
 INF mitigated cve=CVE-2026-43500 module=kafs
@@ -196,7 +206,8 @@ INF findings before fix
 INF mitigated cve=CVE-2026-31431 module=algif_aead
 ERR blacklisted but currently loaded; run 'modprobe -r' or reboot cve=CVE-2026-43284 module=esp4
 INF mitigated cve=CVE-2026-43284 module=esp6
-INF mitigated cve=CVE-2026-43284 module=xfrm_algo
+INF mitigated cve=CVE-2026-43284 module=ipcomp4
+INF mitigated cve=CVE-2026-43284 module=ipcomp6
 INF mitigated cve=CVE-2026-43284 module=xfrm_user
 INF mitigated cve=CVE-2026-43500 module=rxrpc
 INF mitigated cve=CVE-2026-43500 module=kafs
@@ -214,7 +225,8 @@ INF checking vulnerability cve=CVE-2026-43500 name="Dirty Frag (RxRPC)"
 INF mitigated cve=CVE-2026-31431 module=algif_aead
 INF mitigated cve=CVE-2026-43284 module=esp4
 INF mitigated cve=CVE-2026-43284 module=esp6
-INF mitigated cve=CVE-2026-43284 module=xfrm_algo
+INF mitigated cve=CVE-2026-43284 module=ipcomp4
+INF mitigated cve=CVE-2026-43284 module=ipcomp6
 INF mitigated cve=CVE-2026-43284 module=xfrm_user
 INF mitigated cve=CVE-2026-43500 module=rxrpc
 INF mitigated cve=CVE-2026-43500 module=kafs

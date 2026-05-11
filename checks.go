@@ -24,7 +24,7 @@ type rootRunner interface {
 
 var vulns = []vuln{
 	{cve: "CVE-2026-31431", name: "Copy Fail", modules: []string{"algif_aead"}, afAlg: true},
-	{cve: "CVE-2026-43284", name: "Dirty Frag (IPsec)", modules: []string{"esp4", "esp6", "xfrm_algo", "xfrm_user"}},
+	{cve: "CVE-2026-43284", name: "Dirty Frag (IPsec)", modules: []string{"esp4", "esp6", "ipcomp4", "ipcomp6", "xfrm_user"}},
 	{cve: "CVE-2026-43500", name: "Dirty Frag (RxRPC)", modules: []string{"rxrpc", "kafs"}},
 }
 
