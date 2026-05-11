@@ -1,80 +1,46 @@
 # vcheck
 
-Audit a remote Linux host over SSH for the Copy Fail and Dirty Frag
-kernel-module vulnerabilities and, optionally, apply mitigations:
+Audit a remote Linux host over SSH for the Copy Fail and Dirty Frag kernel-module vulnerabilities and, optionally, apply mitigations:
 
-| CVE              | Name                 | Affected modules                                          |
-| ---------------- | -------------------- | --------------------------------------------------------- |
-| CVE-2026-31431   | Copy Fail            | `algif_aead`                                              |
-| CVE-2026-43284   | Dirty Frag (IPsec)   | `esp4`, `esp6`, `ipcomp4`, `ipcomp6`, `xfrm_user`         |
-| CVE-2026-43500   | Dirty Frag (RxRPC)   | `rxrpc`, `kafs`                                           |
+| CVE            | Name               | Affected modules                                  |
+| -------------- | ------------------ | ------------------------------------------------- |
+| CVE-2026-31431 | Copy Fail          | `algif_aead`                                      |
+| CVE-2026-43284 | Dirty Frag (IPsec) | `esp4`, `esp6`, `ipcomp4`, `ipcomp6`, `xfrm_user` |
+| CVE-2026-43500 | Dirty Frag (RxRPC) | `rxrpc`, `kafs`                                   |
 
-For each affected module, vcheck reports whether it is currently loaded, built
-into the running kernel, has past traces in kernel logs, has live `AF_ALG`
-sockets (Copy Fail only), and whether it is already blacklisted under
-`/etc/modprobe.d/`.
+For each affected module, vcheck reports whether it is currently loaded, built into the running kernel, has past traces in kernel logs, has live `AF_ALG` sockets (Copy Fail only), and whether it is
+already blacklisted under `/etc/modprobe.d/`.
 
-With `-fix`, vcheck reports the initial state, writes a
-`cve-XXXX-XXXXX-disable.conf` snippet for any module that is not yet
-blacklisted, then re-runs the checks and reports the final state.
-With `-fix -unload`, vcheck also tries to unload affected modules that were
-loaded before the fix, then uses the final scan to verify whether they are
-still loaded.
-With `-fix -rebuild-initramfs`, vcheck rebuilds the initramfs for the
-currently running kernel (only) after a snippet is written, so the blacklist
-is baked into the next boot image. Older kernel entries keep their original
-initramfs as a fallback.
+With `-fix`, vcheck reports the initial state, writes a `cve-XXXX-XXXXX-disable.conf` snippet for any module that is not yet blacklisted, then re-runs the checks and reports the final state. With
+`-fix -unload`, vcheck also tries to unload affected modules that were loaded before the fix, then uses the final scan to verify whether they are still loaded. With `-fix -rebuild-initramfs`, vcheck
+rebuilds the initramfs for the currently running kernel (only) after a snippet is written, so the blacklist is baked into the next boot image. Older kernel entries keep their original initramfs as a
+fallback.
 
 ## Use `-fix` only after a check-only run
 
-**Always run vcheck without `-fix` first.** Read the report and confirm the
-affected modules are safe to disable on this host before re-running with
-`-fix`. Disabling kernel modules that legitimate workloads depend on can
-affect users and break applications.
+**Always run vcheck without `-fix` first.** Read the report and confirm the affected modules are safe to disable on this host before re-running with `-fix`. Disabling kernel modules that legitimate
+workloads depend on can affect users and break applications.
 
 In particular:
 
-- Treat `-fix` as safe **only** when none of the affected modules are
-  currently loaded — i.e. every module is reported as either `mitigated` or
-  `module not blacklisted` (no `VULNERABLE` or `blacklisted but currently
-  loaded` lines). A loaded module almost always means *something on the host
-  is actively using it*; verify that before blacklisting.
-- The IPsec modules (`esp4`, `esp6`, `ipcomp4`, `ipcomp6`, `xfrm_user`) are
-  required for any IPsec/strongSwan/WireGuard-over-IPsec/IKE deployment. The
-  `ipcomp4`/`ipcomp6` modules implement IPComp payload compression and may be
-  auto-negotiated as part of an IPsec SA even when not explicitly configured.
-  Do not blacklist any of them on a VPN gateway, IPsec endpoint, or anywhere
-  `ip xfrm policy` returns rules. Note that the `xfrm_algo` framework module
-  is intentionally **not** in this list — per vendor guidance (Red Hat,
-  Ubuntu, AWS), blocking the ESP and IPComp protocol modules plus the
-  `xfrm_user` netlink configuration interface is sufficient, and blacklisting
-  `xfrm_algo` would break every other xfrm transform for no extra benefit.
-- The RxRPC modules (`rxrpc`, `kafs`) are required for any host that mounts
-  AFS filesystems. Disabling them will break those mounts on the next boot.
-- `algif_aead` exposes kernel crypto via the `AF_ALG` socket family. It is
-  rarely used by application code directly, but verify by listing live
-  sockets (`ss -p --af-alg`) and checking userspace consumers before
-  blacklisting.
+- Treat `-fix` as safe **only** when none of the affected modules are currently loaded — i.e. every module is reported as either `mitigated` or `module not blacklisted` (no `VULNERABLE` or
+  `blacklisted but currently loaded` lines). A loaded module almost always means _something on the host is actively using it_; verify that before blacklisting.
+- The IPsec modules (`esp4`, `esp6`, `ipcomp4`, `ipcomp6`, `xfrm_user`) are required for any IPsec/strongSwan/WireGuard-over-IPsec/IKE deployment. The `ipcomp4`/`ipcomp6` modules implement IPComp
+  payload compression and may be auto-negotiated as part of an IPsec SA even when not explicitly configured. Do not blacklist any of them on a VPN gateway, IPsec endpoint, or anywhere `ip xfrm policy`
+  returns rules. Note that the `xfrm_algo` framework module is intentionally **not** in this list — per vendor guidance (Red Hat, Ubuntu, AWS), blocking the ESP and IPComp protocol modules plus the
+  `xfrm_user` netlink configuration interface is sufficient, and blacklisting `xfrm_algo` would break every other xfrm transform for no extra benefit.
+- The RxRPC modules (`rxrpc`, `kafs`) are required for any host that mounts AFS filesystems. Disabling them will break those mounts on the next boot.
+- `algif_aead` exposes kernel crypto via the `AF_ALG` socket family. It is rarely used by application code directly, but verify by listing live sockets (`ss -p --af-alg`) and checking userspace
+  consumers before blacklisting.
 
-The blacklist snippets vcheck writes only take effect at module-load time
-(typically next boot, or `modprobe -r <module>` while the system is idle).
-A module that is *already loaded* will keep running even after `-fix` —
-vcheck will report this as `blacklisted but currently loaded; run
-'modprobe -r' or reboot`.
-Passing `-unload` with `-fix` asks vcheck to run `modprobe -r` for loaded
-affected modules after writing blacklist snippets. Use it only when you have
-confirmed the modules are safe to remove from the running kernel.
+The blacklist snippets vcheck writes only take effect at module-load time (typically next boot, or `modprobe -r <module>` while the system is idle). A module that is _already loaded_ will keep running
+even after `-fix` — vcheck will report this as `blacklisted but currently loaded; run 'modprobe -r' or reboot`. Passing `-unload` with `-fix` asks vcheck to run `modprobe -r` for loaded affected
+modules after writing blacklist snippets. Use it only when you have confirmed the modules are safe to remove from the running kernel.
 
-Passing `-rebuild-initramfs` with `-fix` regenerates the initramfs for the
-**currently running kernel only** (`update-initramfs -u -k $(uname -r)` on
-Debian/Ubuntu, `dracut -f --kver $(uname -r)` on RHEL/Fedora). Other installed
-kernels keep their existing initramfs untouched, so if something goes wrong
-after reboot you can pick an older kernel entry from the boot menu and recover.
-Future kernel installs rebuild their own initramfs from the current
-`/etc/modprobe.d/` state, so the blacklist propagates automatically without
-re-running vcheck. If neither `update-initramfs` nor `dracut` is present (e.g.
-Arch, Alpine, immutable images), vcheck warns and continues — rebuild
-manually with the distro's tool before rebooting.
+Passing `-rebuild-initramfs` with `-fix` regenerates the initramfs for the **currently running kernel only** (`update-initramfs -u -k $(uname -r)` on Debian/Ubuntu, `dracut -f --kver $(uname -r)` on
+RHEL/Fedora). Other installed kernels keep their existing initramfs untouched, so if something goes wrong after reboot you can pick an older kernel entry from the boot menu and recover. Future kernel
+installs rebuild their own initramfs from the current `/etc/modprobe.d/` state, so the blacklist propagates automatically without re-running vcheck. If neither `update-initramfs` nor `dracut` is
+present (e.g. Arch, Alpine, immutable images), vcheck warns and continues — rebuild manually with the distro's tool before rebooting.
 
 ## Installation
 
@@ -98,41 +64,40 @@ go install github.com/krisiasty/vcheck@latest
 vcheck -host HOST [flags]
 ```
 
-| Flag                 | Default       | Description                                                                                       |
-| -------------------- | ------------- | ------------------------------------------------------------------------------------------------- |
-| `-host`              | *(required)*  | Remote host                                                                                       |
-| `-user`              | `$USER`       | Remote user                                                                                       |
-| `-port`              | `22`          | Remote SSH port                                                                                   |
-| `-agent`             | `true`        | Use SSH agent for authentication                                                                  |
-| `-identity`          | *(empty)*     | Path to a private key file (prompts for passphrase if encrypted)                                  |
-| `-password`          | `false`       | Prompt for an SSH password                                                                        |
-| `-insecure`          | `false`       | Accept host keys not yet recorded in `known_hosts`; mismatches with a recorded key still fail     |
-| `-fix`               | `false`       | Write `/etc/modprobe.d` snippets for modules that are not already blacklisted                     |
-| `-unload`            | `false`       | With `-fix`, unload affected modules after blacklisting them                                      |
-| `-rebuild-initramfs` | `false`       | With `-fix`, rebuild initramfs for the running kernel only (`update-initramfs` or `dracut`)       |
-| `-skip-logs`         | `false`       | Skip kernel log history checks                                                                    |
-| `-timeout`           | `15s`         | SSH connect timeout                                                                               |
-| `-command-timeout`   | `30s`         | Remote command timeout (`0` disables)                                                             |
-| `-debug`            | `false`       | Increase log verbosity                                                                        |
-| `-version`          | `false`       | Show version and exit                                                                         |
+| Flag                 | Default      | Description                                                                                   |
+| -------------------- | ------------ | --------------------------------------------------------------------------------------------- |
+| `-host`              | _(required)_ | Remote host                                                                                   |
+| `-user`              | `$USER`      | Remote user                                                                                   |
+| `-port`              | `22`         | Remote SSH port                                                                               |
+| `-agent`             | `true`       | Use SSH agent for authentication                                                              |
+| `-identity`          | _(empty)_    | Path to a private key file (prompts for passphrase if encrypted)                              |
+| `-password`          | `false`      | Prompt for an SSH password                                                                    |
+| `-insecure`          | `false`      | Accept host keys not yet recorded in `known_hosts`; mismatches with a recorded key still fail |
+| `-fix`               | `false`      | Write `/etc/modprobe.d` snippets for modules that are not already blacklisted                 |
+| `-unload`            | `false`      | With `-fix`, unload affected modules after blacklisting them                                  |
+| `-rebuild-initramfs` | `false`      | With `-fix`, rebuild initramfs for the running kernel only (`update-initramfs` or `dracut`)   |
+| `-skip-logs`         | `false`      | Skip kernel log history checks                                                                |
+| `-timeout`           | `15s`        | SSH connect timeout                                                                           |
+| `-command-timeout`   | `30s`        | Remote command timeout (`0` disables)                                                         |
+| `-debug`             | `false`      | Increase log verbosity                                                                        |
+| `-version`           | `false`      | Show version and exit                                                                         |
 
-At least one of `-agent`, `-identity`, or `-password` must produce a usable authentication method.
-Methods are tried in the order listed.
+At least one of `-agent`, `-identity`, or `-password` must produce a usable authentication method. Methods are tried in the order listed.
 
-Sudo is required on the target. If passwordless sudo is configured the tool proceeds silently;
-otherwise it prompts once for a password (input is hidden) and feeds it via `sudo -S` for every subsequent command.
+Sudo is required on the target. If passwordless sudo is configured the tool proceeds silently; otherwise it prompts once for a password (input is hidden) and feeds it via `sudo -S` for every
+subsequent command.
 
 ## Exit codes
 
-| Code | Meaning                                                                            |
-| ---- | ---------------------------------------------------------------------------------- |
-| `0`  | All affected modules blacklisted, unloaded, not built in, and inactive             |
-| `1`  | Usage error                                                                        |
-| `2`  | SSH connection failed                                                              |
-| `3`  | Sudo authentication failed                                                         |
-| `4`  | One or more modules not blacklisted (no current exposure)                          |
-| `5`  | One or more modules currently loaded, built into the kernel, or actively in use    |
-| `99` | Internal/check failure                                                             |
+| Code | Meaning                                                                         |
+| ---- | ------------------------------------------------------------------------------- |
+| `0`  | All affected modules blacklisted, unloaded, not built in, and inactive          |
+| `1`  | Usage error                                                                     |
+| `2`  | SSH connection failed                                                           |
+| `3`  | Sudo authentication failed                                                      |
+| `4`  | One or more modules not blacklisted (no current exposure)                       |
+| `5`  | One or more modules currently loaded, built into the kernel, or actively in use |
+| `99` | Internal/check failure                                                          |
 
 ## Sample output
 
@@ -206,9 +171,7 @@ INF mitigated cve=CVE-2026-43500 module=rxrpc
 INF mitigated cve=CVE-2026-43500 module=kafs
 ```
 
-The blacklist is in place, but `esp4` was already loaded into the kernel
-before the snippet was written. Reboot or run `sudo modprobe -r esp4` on the
-target to fully clear it.
+The blacklist is in place, but `esp4` was already loaded into the kernel before the snippet was written. Reboot or run `sudo modprobe -r esp4` on the target to fully clear it.
 
 ### Second run — esp4 still loaded
 
@@ -260,11 +223,8 @@ INF re-scanning after fix snippets_written=2
 ...
 ```
 
-Only the running kernel's initramfs is rebuilt. Other installed kernels keep
-their existing initramfs, so an older entry in the boot menu remains a working
-fallback if the new initramfs causes problems. On a host with neither
-`update-initramfs` nor `dracut`, vcheck logs
-`WRN no supported initramfs tool found ...` and continues.
+Only the running kernel's initramfs is rebuilt. Other installed kernels keep their existing initramfs, so an older entry in the boot menu remains a working fallback if the new initramfs causes
+problems. On a host with neither `update-initramfs` nor `dracut`, vcheck logs `WRN no supported initramfs tool found ...` and continues.
 
 ### First-time host — `-insecure`
 
@@ -276,30 +236,18 @@ INF checking vulnerability cve=CVE-2026-31431 name="Copy Fail"
 ...
 ```
 
-`-insecure` accepts hosts that are not yet in `known_hosts`. If a host *is*
-already recorded and presents a different key, the connection still fails —
-the flag is only a "first contact" override, not a way to suppress
-man-in-the-middle warnings on a known host.
+`-insecure` accepts hosts that are not yet in `known_hosts`. If a host _is_ already recorded and presents a different key, the connection still fails — the flag is only a "first contact" override, not
+a way to suppress man-in-the-middle warnings on a known host.
 
 ## Detection details
 
-- **Loaded:** `lsmod` is fetched once and module names are matched against the
-  first column.
-- **Built-in:** `/lib/modules/$(uname -r)/modules.builtin` and `/sys/module`
-  are checked because modprobe snippets cannot disable code compiled into the
-  running kernel.
-- **Blacklisted:** every file under `/etc/modprobe.d/` is searched (`grep -rE`)
-  for an `install <module> /bin/false` directive — the same form vcheck writes
-  with `-fix`. Other forms of disabling (e.g. `blacklist`) are not recognized.
-- **Past activity:** `journalctl -k` is consulted first, with a fallback to
-  `/var/log/kern.log`; the last five matching lines per module are kept. Pass
-  `-skip-logs` to skip this step.
-- **Active sockets (`algif_aead` only):** `ss -p --af-alg` lists open
-  `AF_ALG` sockets; any output other than the header counts as live use.
+- **Loaded:** `lsmod` is fetched once and module names are matched against the first column.
+- **Built-in:** `/lib/modules/$(uname -r)/modules.builtin` and `/sys/module` are checked because modprobe snippets cannot disable code compiled into the running kernel.
+- **Blacklisted:** every file under `/etc/modprobe.d/` is searched (`grep -rE`) for an `install <module> /bin/false` directive — the same form vcheck writes with `-fix`. Other forms of disabling (e.g.
+  `blacklist`) are not recognized.
+- **Past activity:** `journalctl -k` is consulted first, with a fallback to `/var/log/kern.log`; the last five matching lines per module are kept. Pass `-skip-logs` to skip this step.
+- **Active sockets (`algif_aead` only):** `ss -p --af-alg` lists open `AF_ALG` sockets; any output other than the header counts as live use.
 
-All commands run via `sudo` and are bounded by `-command-timeout` — privileged
-access is required to read `/var/log/kern.log`, list `AF_ALG` sockets, and
-write under `/etc/modprobe.d/`. With `-unload`, privileged access is also
-required to run `modprobe -r`. With `-rebuild-initramfs`, vcheck runs
-`update-initramfs -u -k $(uname -r)` (Debian/Ubuntu) or
-`dracut -f --kver $(uname -r)` (RHEL/Fedora), which also need root.
+All commands run via `sudo` and are bounded by `-command-timeout` — privileged access is required to read `/var/log/kern.log`, list `AF_ALG` sockets, and write under `/etc/modprobe.d/`. With
+`-unload`, privileged access is also required to run `modprobe -r`. With `-rebuild-initramfs`, vcheck runs `update-initramfs -u -k $(uname -r)` (Debian/Ubuntu) or `dracut -f --kver $(uname -r)`
+(RHEL/Fedora), which also need root.
