@@ -7,11 +7,13 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeRunner struct {
-	runFunc      func(cmd string) (string, string, int, error)
-	runStdinFunc func(cmd string, extraStdin io.Reader) (string, string, int, error)
+	runFunc            func(cmd string) (string, string, int, error)
+	runStdinFunc       func(cmd string, extraStdin io.Reader) (string, string, int, error)
+	runWithTimeoutFunc func(cmd string, timeout time.Duration) (string, string, int, error)
 }
 
 func (f fakeRunner) run(cmd string) (string, string, int, error) {
@@ -26,6 +28,16 @@ func (f fakeRunner) runStdin(cmd string, extraStdin io.Reader) (string, string, 
 		return "", "", -1, fmt.Errorf("unexpected stdin command: %s", cmd)
 	}
 	return f.runStdinFunc(cmd, extraStdin)
+}
+
+func (f fakeRunner) runWithTimeout(cmd string, timeout time.Duration) (string, string, int, error) {
+	if f.runWithTimeoutFunc != nil {
+		return f.runWithTimeoutFunc(cmd, timeout)
+	}
+	if f.runFunc != nil {
+		return f.runFunc(cmd)
+	}
+	return "", "", -1, fmt.Errorf("unexpected timed command: %s", cmd)
 }
 
 // On older iproute2 (pre-5.10), ss does not support --af-alg and exits non-zero
@@ -260,7 +272,7 @@ func TestRebuildInitramfsLogsToolOnSuccess(t *testing.T) {
 		},
 	}
 
-	rebuildInitramfs(r)
+	rebuildInitramfs(r, 10*time.Minute)
 
 	out := logs.String()
 	if !strings.Contains(out, "initramfs rebuilt for running kernel") {
@@ -283,7 +295,7 @@ func TestRebuildInitramfsWarnsWhenToolMissing(t *testing.T) {
 		},
 	}
 
-	rebuildInitramfs(r)
+	rebuildInitramfs(r, 10*time.Minute)
 
 	out := logs.String()
 	if !strings.Contains(out, "no supported initramfs tool found") {
@@ -303,7 +315,7 @@ func TestRebuildInitramfsWarnsOnRebuildFailure(t *testing.T) {
 		},
 	}
 
-	rebuildInitramfs(r)
+	rebuildInitramfs(r, 10*time.Minute)
 
 	out := logs.String()
 	if !strings.Contains(out, "initramfs rebuild failed") {
@@ -317,6 +329,22 @@ func TestRebuildInitramfsWarnsOnRebuildFailure(t *testing.T) {
 	}
 }
 
+func TestRebuildInitramfsPassesTimeoutThrough(t *testing.T) {
+	var gotTimeout time.Duration
+	r := fakeRunner{
+		runWithTimeoutFunc: func(cmd string, timeout time.Duration) (string, string, int, error) {
+			gotTimeout = timeout
+			return "", "vcheck-initramfs-tool=update-initramfs\n", 0, nil
+		},
+	}
+
+	rebuildInitramfs(r, 7*time.Minute)
+
+	if gotTimeout != 7*time.Minute {
+		t.Fatalf("rebuildInitramfs timeout = %s, want 7m", gotTimeout)
+	}
+}
+
 func TestApplyFixAndReportRebuildsInitramfsWhenSnippetWritten(t *testing.T) {
 	var logs bytes.Buffer
 	oldLogger := slog.Default()
@@ -324,12 +352,10 @@ func TestApplyFixAndReportRebuildsInitramfsWhenSnippetWritten(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(oldLogger) })
 
 	var rebuildCalls int
+	var rebuildTimeout time.Duration
 	r := fakeRunner{
 		runFunc: func(cmd string) (string, string, int, error) {
 			switch {
-			case strings.Contains(cmd, "update-initramfs") && strings.Contains(cmd, "dracut"):
-				rebuildCalls++
-				return "", "vcheck-initramfs-tool=update-initramfs\n", 0, nil
 			case strings.Contains(cmd, "lsmod"):
 				return "Module                  Size  Used by\n", "", 0, nil
 			case strings.Contains(cmd, "modules.builtin"):
@@ -346,6 +372,14 @@ func TestApplyFixAndReportRebuildsInitramfsWhenSnippetWritten(t *testing.T) {
 				return "", "", -1, fmt.Errorf("unexpected command: %s", cmd)
 			}
 		},
+		runWithTimeoutFunc: func(cmd string, timeout time.Duration) (string, string, int, error) {
+			if !strings.Contains(cmd, "update-initramfs") || !strings.Contains(cmd, "dracut") {
+				return "", "", -1, fmt.Errorf("unexpected timed command: %s", cmd)
+			}
+			rebuildCalls++
+			rebuildTimeout = timeout
+			return "", "vcheck-initramfs-tool=update-initramfs\n", 0, nil
+		},
 		runStdinFunc: func(cmd string, extraStdin io.Reader) (string, string, int, error) {
 			return "", "", 0, nil
 		},
@@ -359,11 +393,14 @@ func TestApplyFixAndReportRebuildsInitramfsWhenSnippetWritten(t *testing.T) {
 		},
 	}
 
-	if _, err := applyFixAndReport(r, findings, fixOptions{checks: checkOptions{}, rebuildInitramfs: true}); err != nil {
+	if _, err := applyFixAndReport(r, findings, fixOptions{checks: checkOptions{}, rebuildInitramfs: true, initramfsTimeout: 5 * time.Minute}); err != nil {
 		t.Fatalf("applyFixAndReport returned error: %v", err)
 	}
 	if rebuildCalls != 1 {
 		t.Fatalf("rebuildInitramfs should run exactly once when a snippet is written, got %d", rebuildCalls)
+	}
+	if rebuildTimeout != 5*time.Minute {
+		t.Fatalf("rebuildInitramfs timeout = %s, want 5m", rebuildTimeout)
 	}
 	if !strings.Contains(logs.String(), "initramfs rebuilt for running kernel") {
 		t.Fatalf("expected initramfs success log:\n%s", logs.String())
@@ -378,13 +415,11 @@ func TestApplyFixAndReportSkipsInitramfsWhenNothingWritten(t *testing.T) {
 
 	r := fakeRunner{
 		runFunc: func(cmd string) (string, string, int, error) {
-			switch {
-			case strings.Contains(cmd, "update-initramfs") && strings.Contains(cmd, "dracut"):
-				t.Fatalf("rebuildInitramfs must not run when no snippet was written")
-				return "", "", 0, nil
-			default:
-				return "", "", -1, fmt.Errorf("unexpected command: %s", cmd)
-			}
+			return "", "", -1, fmt.Errorf("unexpected command: %s", cmd)
+		},
+		runWithTimeoutFunc: func(cmd string, timeout time.Duration) (string, string, int, error) {
+			t.Fatalf("rebuildInitramfs must not run when no snippet was written")
+			return "", "", 0, nil
 		},
 	}
 	findings := []vulnFindings{
@@ -396,7 +431,7 @@ func TestApplyFixAndReportSkipsInitramfsWhenNothingWritten(t *testing.T) {
 		},
 	}
 
-	if _, err := applyFixAndReport(r, findings, fixOptions{checks: checkOptions{}, rebuildInitramfs: true}); err != nil {
+	if _, err := applyFixAndReport(r, findings, fixOptions{checks: checkOptions{}, rebuildInitramfs: true, initramfsTimeout: 10 * time.Minute}); err != nil {
 		t.Fatalf("applyFixAndReport returned error: %v", err)
 	}
 	if strings.Contains(logs.String(), "initramfs rebuilt") {

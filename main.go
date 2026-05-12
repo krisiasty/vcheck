@@ -35,15 +35,16 @@ func main() {
 		useAgent       bool
 		identity       string
 		usePassword    bool
-		fix            bool
-		unload         bool
-		rebuildInit    bool
-		debug          bool
-		showVer        bool
-		insecure       bool
-		skipLogs       bool
-		connectTimeout time.Duration
-		commandTimeout time.Duration
+		fix              bool
+		unload           bool
+		rebuildInit      bool
+		debug            bool
+		showVer          bool
+		insecure         bool
+		skipLogs         bool
+		connectTimeout   time.Duration
+		commandTimeout   time.Duration
+		initramfsTimeout time.Duration
 	)
 	flag.StringVar(&host, "host", "", "remote host (required)")
 	flag.StringVar(&user, "user", "", "remote user (default: $USER)")
@@ -60,6 +61,7 @@ func main() {
 	flag.BoolVar(&skipLogs, "skip-logs", false, "skip kernel log history checks")
 	flag.DurationVar(&connectTimeout, "timeout", 15*time.Second, "SSH connect timeout")
 	flag.DurationVar(&commandTimeout, "command-timeout", 30*time.Second, "remote command timeout (0 disables)")
+	flag.DurationVar(&initramfsTimeout, "initramfs-timeout", 10*time.Minute, "timeout for the initramfs rebuild step (0 disables)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr,
@@ -94,8 +96,9 @@ func main() {
 		slog.Error("invalid port", "port", port)
 		os.Exit(exitUsage)
 	}
-	if connectTimeout < 0 || commandTimeout < 0 {
-		slog.Error("timeout values cannot be negative", "timeout", connectTimeout, "command_timeout", commandTimeout)
+	if connectTimeout < 0 || commandTimeout < 0 || initramfsTimeout < 0 {
+		slog.Error("timeout values cannot be negative",
+			"timeout", connectTimeout, "command_timeout", commandTimeout, "initramfs_timeout", initramfsTimeout)
 		os.Exit(exitUsage)
 	}
 	if user == "" {
@@ -135,7 +138,12 @@ func main() {
 	}
 
 	if fix {
-		exitCode, err := applyFixAndReport(sudo, findings, fixOptions{checks: checkOpts, unload: unload, rebuildInitramfs: rebuildInit})
+		exitCode, err := applyFixAndReport(sudo, findings, fixOptions{
+			checks:           checkOpts,
+			unload:           unload,
+			rebuildInitramfs: rebuildInit,
+			initramfsTimeout: initramfsTimeout,
+		})
 		if err != nil {
 			slog.Error("fix failed", "err", err.Error())
 			os.Exit(exitInternal)
@@ -150,6 +158,7 @@ type fixOptions struct {
 	checks           checkOptions
 	unload           bool
 	rebuildInitramfs bool
+	initramfsTimeout time.Duration
 }
 
 func applyFixAndReport(s rootRunner, findings []vulnFindings, opts fixOptions) (int, error) {
@@ -164,7 +173,7 @@ func applyFixAndReport(s rootRunner, findings []vulnFindings, opts fixOptions) (
 		unloadLoadedModules(s, findings)
 	}
 	if opts.rebuildInitramfs && written > 0 {
-		rebuildInitramfs(s)
+		rebuildInitramfs(s, opts.initramfsTimeout)
 	}
 	if written == 0 && !opts.unload {
 		slog.Info("fix: nothing to do — all affected modules already blacklisted")

@@ -73,10 +73,21 @@ func (s *sudoRunner) run(cmd string) (string, string, int, error) {
 	return s.runStdin(cmd, nil)
 }
 
+// runWithTimeout is like run but overrides the runner's commandTimeout for this
+// single call. Useful for steps that take much longer than diagnostic commands
+// (e.g. initramfs rebuilds, which can run for several minutes).
+func (s *sudoRunner) runWithTimeout(cmd string, timeout time.Duration) (string, string, int, error) {
+	return s.runStdinWithTimeout(cmd, nil, timeout)
+}
+
 // runStdin is like run but pipes extraStdin to the command. When sudo requires
 // a password, it is sent as the first stdin line; sudo consumes that line and
 // the remainder reaches the child process unchanged.
 func (s *sudoRunner) runStdin(cmd string, extraStdin io.Reader) (string, string, int, error) {
+	return s.runStdinWithTimeout(cmd, extraStdin, s.commandTimeout)
+}
+
+func (s *sudoRunner) runStdinWithTimeout(cmd string, extraStdin io.Reader, timeout time.Duration) (string, string, int, error) {
 	sess, err := s.client.NewSession()
 	if err != nil {
 		return "", "", -1, err
@@ -99,7 +110,7 @@ func (s *sudoRunner) runStdin(cmd string, extraStdin io.Reader) (string, string,
 	}
 	sess.Stdin = &stdin
 
-	err = runSSHSession(sess, buildSudoCmd(s.passwordless, cmd), s.commandTimeout)
+	err = runSSHSession(sess, buildSudoCmd(s.passwordless, cmd), timeout)
 	if err != nil {
 		var ee *ssh.ExitError
 		if errors.As(err, &ee) {

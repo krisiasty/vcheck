@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"time"
 )
 
 // vuln describes a vulnerability checked by vcheck. afAlg adds an extra
@@ -20,6 +21,7 @@ type vuln struct {
 type rootRunner interface {
 	run(cmd string) (string, string, int, error)
 	runStdin(cmd string, extraStdin io.Reader) (string, string, int, error)
+	runWithTimeout(cmd string, timeout time.Duration) (string, string, int, error)
 }
 
 var vulns = []vuln{
@@ -487,8 +489,10 @@ func loadedAffectedModules(findings []vulnFindings) []string {
 // original initramfs, giving the operator a known-good fallback if the new
 // initramfs misbehaves. Only Debian-family (update-initramfs) and Red Hat
 // family (dracut) tools are supported; on anything else the step is skipped
-// with a warning so the run still completes.
-func rebuildInitramfs(s rootRunner) {
+// with a warning so the run still completes. Uses a dedicated timeout because
+// rebuilds can take several minutes on slow hardware or large module sets —
+// the default -command-timeout (30s) would SIGKILL them mid-flight.
+func rebuildInitramfs(s rootRunner, timeout time.Duration) {
 	// Single shell command: detect the tool, capture which one we used into a
 	// known stderr marker, and rebuild only the running kernel's initramfs.
 	// Falling out of both branches is the "no supported tool" case.
@@ -503,7 +507,8 @@ func rebuildInitramfs(s rootRunner) {
 		`  echo "vcheck-initramfs-tool=none" >&2; ` +
 		`  exit 127; ` +
 		`fi`
-	_, stderr, code, err := s.run(cmd)
+	slog.Info("rebuilding initramfs for running kernel", "timeout", timeout)
+	_, stderr, code, err := s.runWithTimeout(cmd, timeout)
 	tool := initramfsToolFromStderr(stderr)
 	if err != nil {
 		slog.Warn("initramfs rebuild failed; rebuild manually before reboot",

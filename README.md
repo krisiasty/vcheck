@@ -42,6 +42,9 @@ RHEL/Fedora). Other installed kernels keep their existing initramfs untouched, s
 installs rebuild their own initramfs from the current `/etc/modprobe.d/` state, so the blacklist propagates automatically without re-running vcheck. If neither `update-initramfs` nor `dracut` is
 present (e.g. Arch, Alpine, immutable images), vcheck warns and continues — rebuild manually with the distro's tool before rebooting.
 
+The rebuild can take several minutes (especially `dracut` on hosts with many drivers), which would exceed the diagnostic `-command-timeout`. It runs under its own `-initramfs-timeout` (default `10m`)
+so the rebuild gets the room it needs while the fast checks keep their tight budget. Bump `-initramfs-timeout` for slow hardware, or pass `0` to disable the timeout entirely.
+
 ## Installation
 
 **Homebrew (macOS):**
@@ -79,6 +82,7 @@ vcheck -host HOST [flags]
 | `-skip-logs`         | `false`      | Skip kernel log history checks                                                                |
 | `-timeout`           | `15s`        | SSH connect timeout                                                                           |
 | `-command-timeout`   | `30s`        | Remote command timeout (`0` disables)                                                         |
+| `-initramfs-timeout` | `10m`        | Timeout for the initramfs rebuild step (`0` disables); only used with `-rebuild-initramfs`    |
 | `-debug`             | `false`      | Increase log verbosity                                                                        |
 | `-version`           | `false`      | Show version and exit                                                                         |
 
@@ -218,6 +222,7 @@ $ vcheck -fix -rebuild-initramfs -host host.example.com -identity ~/.ssh/id_ed25
 ...
 INF writing modprobe.d snippet path=/etc/modprobe.d/cve-2026-43284-disable.conf modules="[esp4 esp6 ipcomp4 ipcomp6 xfrm_user]"
 INF writing modprobe.d snippet path=/etc/modprobe.d/cve-2026-43500-disable.conf modules="[rxrpc kafs]"
+INF rebuilding initramfs for running kernel timeout=10m0s
 INF initramfs rebuilt for running kernel tool=update-initramfs
 INF re-scanning after fix snippets_written=2
 ...
