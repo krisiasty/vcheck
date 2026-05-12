@@ -29,12 +29,12 @@ const (
 
 func main() {
 	var (
-		host           string
-		user           string
-		port           int
-		useAgent       bool
-		identity       string
-		usePassword    bool
+		host             string
+		user             string
+		port             int
+		useAgent         bool
+		identity         string
+		usePassword      bool
 		fix              bool
 		unload           bool
 		rebuildInit      bool
@@ -43,6 +43,7 @@ func main() {
 		insecure         bool
 		skipLogs         bool
 		connectTimeout   time.Duration
+		sshKeepAlive     time.Duration
 		commandTimeout   time.Duration
 		initramfsTimeout time.Duration
 	)
@@ -60,6 +61,7 @@ func main() {
 	flag.BoolVar(&insecure, "insecure", false, "accept host keys not yet recorded in known_hosts; mismatches with a recorded key still fail")
 	flag.BoolVar(&skipLogs, "skip-logs", false, "skip kernel log history checks")
 	flag.DurationVar(&connectTimeout, "timeout", 15*time.Second, "SSH connect timeout")
+	flag.DurationVar(&sshKeepAlive, "ssh-keepalive", 30*time.Second, "SSH keepalive interval (0 disables)")
 	flag.DurationVar(&commandTimeout, "command-timeout", 30*time.Second, "remote command timeout (0 disables)")
 	flag.DurationVar(&initramfsTimeout, "initramfs-timeout", 10*time.Minute, "timeout for the initramfs rebuild step (0 disables)")
 
@@ -96,9 +98,10 @@ func main() {
 		slog.Error("invalid port", "port", port)
 		os.Exit(exitUsage)
 	}
-	if connectTimeout < 0 || commandTimeout < 0 || initramfsTimeout < 0 {
+	if connectTimeout < 0 || sshKeepAlive < 0 || commandTimeout < 0 || initramfsTimeout < 0 {
 		slog.Error("timeout values cannot be negative",
-			"timeout", connectTimeout, "command_timeout", commandTimeout, "initramfs_timeout", initramfsTimeout)
+			"timeout", connectTimeout, "ssh_keepalive", sshKeepAlive,
+			"command_timeout", commandTimeout, "initramfs_timeout", initramfsTimeout)
 		os.Exit(exitUsage)
 	}
 	if user == "" {
@@ -111,7 +114,7 @@ func main() {
 	slog.Debug("target", "user", user, "host", host, "port", port)
 
 	ac := authConfig{useAgent: useAgent, identityPath: identity, usePassword: usePassword}
-	client, err := dial(user, host, port, connectTimeout, ac, insecure)
+	client, err := dial(user, host, port, connectTimeout, sshKeepAlive, ac, insecure)
 	if err != nil {
 		slog.Error("ssh connection failed", "host", host, "port", port, "err", err.Error())
 		os.Exit(exitConn)

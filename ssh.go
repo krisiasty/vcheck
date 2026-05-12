@@ -181,7 +181,11 @@ func hostKeyVerifier(acceptUnknown bool) (ssh.HostKeyCallback, func(addr string)
 	return cb, algos, nil
 }
 
-func dial(user, host string, port int, timeout time.Duration, ac authConfig, acceptUnknown bool) (*ssh.Client, error) {
+type sshKeepAliveSender interface {
+	SendRequest(name string, wantReply bool, payload []byte) (bool, []byte, error)
+}
+
+func dial(user, host string, port int, timeout, keepAliveInterval time.Duration, ac authConfig, acceptUnknown bool) (*ssh.Client, error) {
 	auth, err := buildAuthMethods(ac)
 	if err != nil {
 		return nil, err
@@ -207,5 +211,28 @@ func dial(user, host string, port int, timeout time.Duration, ac authConfig, acc
 			slog.Debug("pinned host-key algorithms from known_hosts", "addr", addr, "algorithms", a)
 		}
 	}
-	return ssh.Dial("tcp", addr, cfg)
+	client, err := ssh.Dial("tcp", addr, cfg)
+	if err != nil {
+		return nil, err
+	}
+	startSSHKeepAlive(client, keepAliveInterval)
+	return client, nil
+}
+
+func startSSHKeepAlive(client sshKeepAliveSender, interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			if _, _, err := client.SendRequest("keepalive@openssh.com", false, nil); err != nil {
+				slog.Debug("ssh keepalive stopped", "err", err.Error())
+				return
+			}
+		}
+	}()
 }

@@ -43,7 +43,8 @@ installs rebuild their own initramfs from the current `/etc/modprobe.d/` state, 
 present (e.g. Arch, Alpine, immutable images), vcheck warns and continues — rebuild manually with the distro's tool before rebooting.
 
 The rebuild can take several minutes (especially `dracut` on hosts with many drivers), which would exceed the diagnostic `-command-timeout`. It runs under its own `-initramfs-timeout` (default `10m`)
-so the rebuild gets the room it needs while the fast checks keep their tight budget. Bump `-initramfs-timeout` for slow hardware, or pass `0` to disable the timeout entirely.
+so the rebuild gets the room it needs while the fast checks keep their tight budget. Bump `-initramfs-timeout` for slow hardware, or pass `0` to disable the timeout entirely. During long-running
+remote commands, vcheck sends SSH keepalive requests every `30s` by default to keep NAT/firewall idle timers from dropping the connection. Tune this with `-ssh-keepalive`, or pass `0` to disable it.
 
 ## Installation
 
@@ -81,6 +82,7 @@ vcheck -host HOST [flags]
 | `-rebuild-initramfs` | `false`      | With `-fix`, rebuild initramfs for the running kernel only (`update-initramfs` or `dracut`)   |
 | `-skip-logs`         | `false`      | Skip kernel log history checks                                                                |
 | `-timeout`           | `15s`        | SSH connect timeout                                                                           |
+| `-ssh-keepalive`     | `30s`        | SSH keepalive interval (`0` disables)                                                         |
 | `-command-timeout`   | `30s`        | Remote command timeout (`0` disables)                                                         |
 | `-initramfs-timeout` | `10m`        | Timeout for the initramfs rebuild step (`0` disables); only used with `-rebuild-initramfs`    |
 | `-debug`             | `false`      | Increase log verbosity                                                                        |
