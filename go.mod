@@ -1,9 +1,9 @@
 module github.com/krisiasty/vcheck
 
-go 1.26.3
+go 1.26.5
 
 require (
-	github.com/lmittmann/tint v1.1.3
+	github.com/lmittmann/tint v1.2.0
 	github.com/mattn/go-isatty v0.0.22
 	github.com/skeema/knownhosts v1.3.2
 	golang.org/x/crypto v0.54.0
