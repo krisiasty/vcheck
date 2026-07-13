@@ -198,7 +198,7 @@ func initLog(debug bool) {
 	if debug {
 		level = slog.LevelDebug
 	}
-	slog.SetDefault(slog.New(tint.NewHandler(os.Stderr, &tint.Options{
+	slog.SetDefault(slog.New(tint.NewTextHandler(os.Stderr, &tint.Options{
 		Level:      level,
 		TimeFormat: time.StampMilli,
 		NoColor:    !isatty.IsTerminal(os.Stderr.Fd()),
