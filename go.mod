@@ -7,7 +7,7 @@ require (
 	github.com/mattn/go-isatty v0.0.22
 	github.com/skeema/knownhosts v1.3.2
 	golang.org/x/crypto v0.53.0
-	golang.org/x/term v0.44.0
+	golang.org/x/term v0.45.0
 )
 
-require golang.org/x/sys v0.46.0 // indirect
+require golang.org/x/sys v0.47.0 // indirect
