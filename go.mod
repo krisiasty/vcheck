@@ -4,7 +4,7 @@ go 1.26.5
 
 require (
 	github.com/lmittmann/tint v1.2.0
-	github.com/mattn/go-isatty v0.0.22
+	github.com/mattn/go-isatty v0.0.23
 	github.com/skeema/knownhosts v1.3.2
 	golang.org/x/crypto v0.54.0
 	golang.org/x/term v0.45.0
