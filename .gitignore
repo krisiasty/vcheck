@@ -6,3 +6,6 @@ go.work.sum
 .vscode/
 .claude/
 dist/
+
+# graphify knowledge graph output
+graphify-out/
