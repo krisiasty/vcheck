@@ -1,13 +1,13 @@
 module github.com/krisiasty/vcheck
 
-go 1.26.6
+go 1.27.3
 
 require (
-	github.com/lmittmann/tint v1.2.0
+	github.com/lmittmann/tint v1.2.1
 	github.com/mattn/go-isatty v0.0.24
 	github.com/skeema/knownhosts v1.3.3
-	golang.org/x/crypto v0.56.0
-	golang.org/x/term v0.45.0
+	golang.org/x/crypto v0.58.0
+	golang.org/x/term v0.47.0
 )
 
-require golang.org/x/sys v0.47.0 // indirect
+require golang.org/x/sys v0.49.0 // indirect

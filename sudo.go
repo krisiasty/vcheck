@@ -144,7 +144,8 @@ func runSSHSession(sess *ssh.Session, cmd string, timeout time.Duration) error {
 		_ = sess.Signal(ssh.SIGKILL)
 		_ = sess.Close()
 		select {
-		case <-done:
+		case waitErr := <-done:
+			_ = waitErr // The timeout error takes precedence over the session error.
 		case <-time.After(time.Second):
 		}
 		return fmt.Errorf("remote command timed out after %s", timeout)
